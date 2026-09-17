@@ -9,6 +9,9 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Tray, Menu, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
+const http = require('http');
+const { URL } = require('url');
 const { execFile } = require('child_process');
 const core = require('./lib/core.js');
 
@@ -196,6 +199,7 @@ if (!gotTheLock) {
     app.setAppUserModelId('io.github.wgweb.companion');   // Windows 通知必需
     createWindow();
     createTray();
+    startAutoSync();                                      // 启动服务端自动更新轮询
   });
 }
 app.on('before-quit', () => { quitting = true; });
@@ -204,6 +208,10 @@ app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWin
 
 /* ---------------- IPC ---------------- */
 ipcMain.handle('env', () => ({ platform: process.platform, wgExe: core.findWireguardExe()[0] || '', version: app.getVersion() }));
+
+ipcMain.handle('get-cfg', () => loadCfg());
+ipcMain.handle('save-cfg', (_e, c) => { saveCfg(c || {}); startAutoSync(); return loadCfg(); });
+ipcMain.handle('sync-now', async () => { await autoSyncTick(); return { ok: true }; });
 
 ipcMain.handle('list-tunnels', () => listTunnels());
 
@@ -308,15 +316,83 @@ ipcMain.handle('unwatch-tunnel', (_e, file) => {
   if (w) { try { w.close(); } catch {} watchers.delete(file); }
 });
 
-/* 重下发：down → up（供「配置变更且隧道在线」时自动调用） */
-ipcMain.handle('tunnel-reapply', async (_e, file) => {
+/* 重下发：down → up（供「配置变更且隧道在线」时自动调用，含服务端自动更新） */
+async function reapplyTunnel(file) {
   const c = core.commands[process.platform];
   if (!c) return { ok: false };
   await runCmd(process.platform === 'win32' ? c.down(file.replace(/\.conf$/i, '')) : c.down(tunnelPath(file)));
   const r = await runCmd(c.up(tunnelPath(file)));
   if (!r.err) setState(file, 'up');
   return { ok: !r.err };
-});
+}
+ipcMain.handle('tunnel-reapply', async (_e, file) => reapplyTunnel(file));
+
+/* ---------------- 服务端自动更新（定时轮询）----------------
+ * 客户端凭每账号只读令牌，定时从 wg-web 拉取最新 conf；内容变化则覆盖本地文件，
+ * 触发 fs.watch → 刷新界面，若隧道在线则自动重下发。全程出站 HTTPS，无需开放入站端口。 */
+async function fetchServerConf(server, token, allowInsecure) {
+  return new Promise(resolve => {
+    let u;
+    try { u = new URL((server || '').replace(/\/+$/, '') + '/api/client/conf?token=' + encodeURIComponent(token || '')); }
+    catch { return resolve(null); }
+    if (!/^https?:$/.test(u.protocol)) return resolve(null);
+    const lib = u.protocol === 'http:' ? http : https;
+    const req = lib.get(u, {
+      timeout: 15000,
+      headers: { 'user-agent': 'wg-companion/' + (app.getVersion() || '1.0.0') },
+      rejectUnauthorized: !allowInsecure,   // 默认允许自签名证书（内网部署常见）
+    }, res => {
+      let body = '';
+      res.on('data', d => body += d);
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(body);
+          if (j && typeof j.conf === 'string') resolve({ conf: j.conf, hash: j.hash || '', name: j.name || '' });
+          else resolve(null);
+        } catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { try { req.destroy(); } catch {} resolve(null); });
+  });
+}
+
+let syncTimer = null;
+let syncing = false;
+async function autoSyncTick() {
+  if (syncing) return;
+  syncing = true;
+  try {
+    const cfg = loadCfg();
+    if (cfg.autoUpdate === false) return;
+    const allowInsecure = cfg.allowInsecure !== false;
+    for (const t of listTunnels()) {
+      if (!t.server || !t.token) continue;        // 仅服务端下发的配置参与自动更新
+      let cur;
+      try { cur = fs.readFileSync(tunnelPath(t.file), 'utf8'); } catch { continue; }
+      const got = await fetchServerConf(t.server, t.token, allowInsecure);
+      if (!got) continue;
+      const curNorm = cur.replace(/\r\n/g, '\n');
+      const gotNorm = got.conf.replace(/\r\n/g, '\n');
+      if (curNorm === gotNorm) continue;          // 未变更，跳过
+      try {
+        fs.writeFileSync(tunnelPath(t.file), got.conf, 'utf8');
+        /* 复用本地监视的同一广播：界面刷新 + 在线则自动重下发 */
+        broadcast('conf-changed', { file: t.file, tunnels: listTunnels(), server: true });
+      } catch {}
+    }
+  } catch {}
+  finally { syncing = false; }
+}
+
+function startAutoSync() {
+  if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
+  const cfg = loadCfg();
+  if (cfg.autoUpdate === false) return;            // 用户关闭了自动更新
+  const sec = Math.max(10, Number(cfg.autoUpdateInterval) || 30);
+  syncTimer = setInterval(autoSyncTick, sec * 1000);
+  setTimeout(autoSyncTick, 3000);                  // 启动后先错峰跑一次
+}
 
 /* 窗口控制（无框窗口自绘标题栏） */
 ipcMain.on('win-min', () => win && win.minimize());

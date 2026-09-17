@@ -10,6 +10,7 @@ let selected = null;       // 当前选中的 file（主环展示）
 let states = {};           // file -> 'up' | 'down' | 'connecting' | 'disconnecting'
 const watchSet = new Set();
 const MODE_LABEL = { allow: '白名单', deny: '黑名单', proxy: '全代理' };
+let cfg = {};   // 设置：autoUpdate / autoUpdateInterval / allowInsecure
 
 /* ---------------- 小工具 ---------------- */
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -47,7 +48,7 @@ function renderList() {
     <div class="tcard ${selected === t.file ? 'sel' : ''} ${states[t.file] === 'up' ? 'up' : ''}"
          data-file="${esc(t.file)}" style="animation-delay:${i * 60}ms" title="双击开关隧道 · 长按拖动排序">
       <div class="tc-main">
-        <div class="tc-name">${esc(t.name)} ${modeBadge(t.mode)}</div>
+        <div class="tc-name">${esc(t.name)} ${modeBadge(t.mode)}${t.server && t.token ? '<span class="sync-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 .5-9 6 6 0 0 0-11.6-1.5A4 4 0 0 0 6 19h11.5z"/></svg>服务端同步</span>' : ''}</div>
         <div class="tc-nets">${netChips(t.nets)}</div>
         <div class="tc-ep mono">${esc(t.peer.endpoint || '未设置 Endpoint')}${t.iface.address[0] ? ' · ' + esc(t.iface.address[0]) : ''}</div>
       </div>
@@ -267,10 +268,12 @@ window.wgc.onStatesChanged(({ states: s }) => {
   renderAll();
 });
 
-/* 配置自动更新：主进程监视到文件变化 → 刷新列表；隧道在线则自动重下发 */
-window.wgc.onConfChanged(async ({ file, tunnels: ts }) => {
+/* 配置自动更新：主进程监视到文件变化 → 刷新列表；隧道在线则自动重下发。
+ * server=true 表示本次变更来自「服务端自动更新」轮询（区分本地手动覆盖）。 */
+window.wgc.onConfChanged(async ({ file, tunnels: ts, server }) => {
   tunnels = ts;
-  toast(`「${(tunnels.find(t => t.file === file) || {}).name || file}」配置已更新`);
+  const nm = (tunnels.find(t => t.file === file) || {}).name || file;
+  toast(`「${nm}」配置已更新${server ? '（服务端）' : ''}`);
   if (states[file] === 'up') {
     toast('隧道在线：正在自动重新下发新配置…');
     const r = await window.wgc.reapply(file);
@@ -279,9 +282,35 @@ window.wgc.onConfChanged(async ({ file, tunnels: ts }) => {
   renderAll();
 });
 
+/* ---------------- 设置：服务端自动更新 ---------------- */
+function openSettings() {
+  $('#cfgAutoUpdate').checked = cfg.autoUpdate !== false;
+  $('#cfgInterval').value = Math.max(10, Number(cfg.autoUpdateInterval) || 30);
+  $('#cfgInsecure').checked = cfg.allowInsecure !== false;
+  $('#settingsModal').hidden = false;
+}
+function closeSettings() { $('#settingsModal').hidden = true; }
+$('#btnSettings').addEventListener('click', openSettings);
+$('#btnSettingsClose').addEventListener('click', closeSettings);
+$('#settingsModal').addEventListener('click', e => { if (e.target === $('#settingsModal')) closeSettings(); });
+$('#btnSettingsSave').addEventListener('click', async () => {
+  cfg.autoUpdate = $('#cfgAutoUpdate').checked;
+  cfg.autoUpdateInterval = Math.max(10, Number($('#cfgInterval').value) || 30);
+  cfg.allowInsecure = $('#cfgInsecure').checked;
+  await window.wgc.saveCfg(cfg);
+  closeSettings();
+  toast('设置已保存');
+});
+$('#btnSyncNow').addEventListener('click', async () => {
+  toast('正在检查服务端更新…');
+  await window.wgc.syncNow();
+  toast('已检查（如有更新已自动生效）');
+});
+
 /* ---------------- 启动 ---------------- */
 (async () => {
   env = await window.wgc.env();
+  cfg = await window.wgc.getCfg();
   $('#platTip').innerHTML = env.platform === 'win32'
     ? `Windows：需安装官方 WireGuard MSI（服务化接口），本应用以 <b>WireGuardTunnel$</b> 系统服务方式开合隧道，随系统自启。安装包要求以管理员身份运行。`
     : env.platform === 'darwin'

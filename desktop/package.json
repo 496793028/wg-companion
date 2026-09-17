@@ -21,7 +21,25 @@
     "appId": "io.github.wgweb.companion",
     "productName": "WG Companion",
     "directories": { "output": "../dist" },
-    "win": { "target": ["nsis"], "requestedExecutionLevel": "requireAdministrator" },
-    "mac": { "target": ["dmg"], "category": "public.app-category.utilities" }
+    "win": {
+      "target": ["nsis"],
+      "requestedExecutionLevel": "requireAdministrator",
+      "icon": "build/icon.ico"
+    },
+    "mac": { "target": ["dmg"], "category": "public.app-category.utilities" },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": false,
+      "include": "build/installer.nsh",
+      "menuCategory": "WG Companion",
+      "shortcutName": "WG Companion",
+      "uninstallDisplayName": "WG Companion",
+      "deleteAppDataOnUninstall": false,
+      "language": "2052",
+      "displayLanguageSelector": false
+    }
   }
 }

@@ -49,6 +49,27 @@ npm run dist       # 打包安装程序（Windows nsis / macOS dmg）
 
 使用：从 wg-web 用户卡片点击「客户端配置」下载 `.conf` → 拖入本应用（或点「导入配置」）→ 点开关。之后每次权限变更，只要重新下载同名配置覆盖，应用会自动更新并在隧道在线时自动重下发。
 
+#### Windows 安装与卸载（分步安装器）
+
+打包出的 `WG Companion Setup x.y.z.exe` 是一个**分步 NSIS 安装向导**（非一键安装），流程如下：
+
+1. **选择安装目录**：默认 `C:\Program Files\WG Companion`，可手动更改（例如改到 `D:\Apps\WG Companion`）。
+2. **选择开始菜单文件夹**：默认 `WG Companion`。
+3. **完成页勾选快捷方式**（均可取消）：
+   - ☑ 创建桌面快捷方式
+   - ☑ 创建开始菜单快捷方式
+   - ☑ 安装完成后运行 WG Companion
+4. 点「安装」→ 写入文件 → 完成。
+
+> 安装器以**每台机器（perMachine）+ 管理员**方式运行，会弹出 UAC 提权；这是因为隧道需注册为 `WireGuardTunnel$<隧道名>` 系统服务。若你不是管理员，请右键「以管理员身份运行」安装程序。
+
+**卸载**（两种方式，任选其一）：
+
+- 控制面板 → 程序和功能 → 找到 **WG Companion** → 卸载；
+- 或直接运行安装目录下的 **`Uninstall WG Companion.exe`**。
+
+> 卸载只移除程序文件，默认**保留**你的用户配置（已导入的 `.conf`、排序、关闭行为记忆等，位于 `%APPDATA%\io.github.wgweb.companion`）。需要彻底清理时，手动删除该目录即可。
+
 ### Android
 
 用 Android Studio 打开 `android/` 目录，直接 Run：
