@@ -87,9 +87,16 @@ ipcMain.handle('import-conf', async (_e, paths) => {
   ensureDir();
   const imported = [];
   for (const src of files) {
-    const dest = tunnelPath(path.basename(src));
+    /* 存储文件名必须合法化为隧道名：浏览器会给重复下载加 " (1)" 等括号/空格，
+       wireguard.exe 服务化接口会因此报 "Tunnel name is not valid"。
+       显示名来自 wg-meta，不受此影响。重名自动追加 -2/-3… */
+    const base = path.basename(src).replace(/\.conf$/i, '');
+    let name = core.sanitizeTunnelName(base);
+    let n = 2;
+    while (fs.existsSync(tunnelPath(name + '.conf'))) name = `${core.sanitizeTunnelName(base).slice(0, 29)}-${n++}`;
+    const dest = tunnelPath(name + '.conf');
     fs.copyFileSync(src, dest);       // 复制进应用数据目录：之后才能监视自动更新
-    imported.push(path.basename(src));
+    imported.push(name + '.conf');
   }
   return { canceled: false, imported, tunnels: listTunnels() };
 });

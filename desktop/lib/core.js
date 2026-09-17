@@ -63,6 +63,19 @@ function parseConf(text, fileName) {
 const MODE_LABEL = { allow: '白名单', deny: '黑名单', proxy: '全代理' };
 const modeLabel = m => MODE_LABEL[m] || '白名单';
 
+/* ---- 隧道名合法性（官方客户端限制：^[a-zA-Z0-9_=+.-]{1,32}$）----
+ * 浏览器重复下载会给文件名加 " (1)" 这类括号与空格，导致 /installtunnelservice 报
+ * "Tunnel name is not valid"。导入时统一净化为合法名（仅影响服务名，不影响显示名）。 */
+const TUNNEL_NAME_RE = /^[a-zA-Z0-9_=+.-]{1,32}$/;
+function isTunnelNameValid(n) { return TUNNEL_NAME_RE.test(String(n || '')); }
+function sanitizeTunnelName(base) {
+  let n = String(base || '').replace(/\.conf$/i, '')
+    .replace(/[^a-zA-Z0-9_=+.-]+/g, '_')      // 空格/括号/中文等一律替换为 _
+    .replace(/^_+|_+$/g, '')                   // 去首尾下划线
+    .slice(0, 32);
+  return isTunnelNameValid(n) ? n : 'tunnel';
+}
+
 /* ---- 平台隧道命令（官方客户端服务化接口，无需打开 WireGuard GUI）----
  * Windows：官方 MSI 安装后自带服务化 CLI（需要管理员权限）
  *   wireguard.exe /installtunnelservice  <conf 绝对路径>
@@ -94,4 +107,4 @@ const commands = {
   },
 };
 
-module.exports = { parseMeta, parseConf, modeLabel, MODE_LABEL, commands, findWireguardExe, winServiceName };
+module.exports = { parseMeta, parseConf, modeLabel, MODE_LABEL, commands, findWireguardExe, winServiceName, isTunnelNameValid, sanitizeTunnelName };

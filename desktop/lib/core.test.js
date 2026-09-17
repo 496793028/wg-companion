@@ -1,6 +1,6 @@
 /* wg-companion 核心逻辑单测：node lib/core.test.js */
 'use strict';
-const { parseMeta, parseConf, modeLabel, commands, findWireguardExe } = require('./core.js');
+const { parseMeta, parseConf, modeLabel, commands, findWireguardExe, sanitizeTunnelName, isTunnelNameValid } = require('./core.js');
 
 let pass = 0, fail = 0;
 const ok = (c, n) => { if (c) { pass++; console.log('  PASS ' + n); } else { fail++; console.log('  FAIL ' + n); } };
@@ -68,6 +68,13 @@ const d = commands.darwin;
 ok(d.up('/etc/wireguard/a.conf').cmd === 'wg-quick' && d.up('/etc/wireguard/a.conf').elevate === 'osascript', 'macOS wg-quick + 提权');
 ok(d.parseStatus('interface: a\n  public key: x'), 'macOS 状态解析');
 ok(findWireguardExe().some(p => p.endsWith('wireguard.exe')), 'Win 客户端路径候选');
+
+/* 隧道名净化（浏览器 " (1)" 括号/空格/中文） */
+ok(sanitizeTunnelName('10.100.0.13-wg (1)') === '10.100.0.13-wg_1', '净化：括号+空格');
+ok(sanitizeTunnelName('陈晓明-wg.conf') === '-wg', '净化：中文→下划线并去首尾');
+ok(sanitizeTunnelName('   ') === 'tunnel', '净化：全非法→tunnel 兜底');
+ok(sanitizeTunnelName('a'.repeat(40)).length === 32, '净化：截断 32 字符');
+ok(isTunnelNameValid(sanitizeTunnelName('10.100.0.13-wg (1)')), '净化结果合法');
 
 console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
