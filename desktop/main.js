@@ -31,7 +31,23 @@ function createWindow() {
   win.once('ready-to-show', () => { win.show(); win.focus(); });
 }
 
-app.whenReady().then(createWindow);
+/* ---------------- 单实例锁 ----------------
+ * 已有一个实例在运行时，再次启动（双击/开始菜单/开机自启）不再开新窗口，
+ * 而是把已开窗口还原并置前。 */
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    }
+  });
+
+  app.whenReady().then(createWindow);
+}
 app.on('window-all-closed', () => process.platform !== 'darwin' && app.quit());
 app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 
