@@ -1,0 +1,27 @@
+{
+  "name": "wg-companion",
+  "productName": "WG Companion",
+  "version": "1.0.0",
+  "description": "wg-web 配套 WireGuard 客户端：导入配置即显示用户名/授权网段/黑白名单·全代理模式，一键开关隧道并自动更新配置（Windows / macOS / Android）",
+  "main": "main.js",
+  "author": "wg-web",
+  "license": "MIT",
+  "scripts": {
+    "test": "node lib/core.test.js",
+    "start": "electron .",
+    "dist": "electron-builder --win --mac",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "io.github.wgweb.companion",
+    "productName": "WG Companion",
+    "directories": { "output": "../dist" },
+    "win": { "target": ["nsis"], "requestedExecutionLevel": "requireAdministrator" },
+    "mac": { "target": ["dmg"], "category": "public.app-category.utilities" }
+  }
+}
