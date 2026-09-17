@@ -1,11 +1,12 @@
-/* wg-companion 渲染进程：UI 状态机 + 动画 + 与主进程 IPC */
+/* wg-companion 渲染进程：UI 状态机 + 动画 + 与主进程 IPC
+ * 卡片交互：单击 = 选中（主环展示）· 双击 = 开关隧道 · 长按 450ms 拖动 = 排序（自动持久化） */
 'use strict';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
 let env = { platform: 'win32', wgExe: '', version: '1.0.0' };
 let tunnels = [];          // [{file,name,mode,nets,iface,peer,...}]
-let selected = null;       // 当前选中的 file
+let selected = null;       // 当前选中的 file（主环展示）
 let states = {};           // file -> 'up' | 'down' | 'connecting' | 'disconnecting'
 const watchSet = new Set();
 const MODE_LABEL = { allow: '白名单', deny: '黑名单', proxy: '全代理' };
@@ -44,7 +45,7 @@ function renderList() {
   $('#emptyTip').style.display = tunnels.length ? 'none' : '';
   list.innerHTML = tunnels.map((t, i) => `
     <div class="tcard ${selected === t.file ? 'sel' : ''} ${states[t.file] === 'up' ? 'up' : ''}"
-         data-file="${esc(t.file)}" style="animation-delay:${i * 60}ms">
+         data-file="${esc(t.file)}" style="animation-delay:${i * 60}ms" title="双击开关隧道 · 长按拖动排序">
       <div class="tc-main">
         <div class="tc-name">${esc(t.name)} ${modeBadge(t.mode)}</div>
         <div class="tc-nets">${netChips(t.nets)}</div>
@@ -83,7 +84,7 @@ function renderHero() {
   ep.hidden = !t; if (t) ep.textContent = t.peer.endpoint || '';
   btn.disabled = !t || st === 'connecting' || st === 'disconnecting';
   btn.classList.toggle('up', st === 'up');
-  $('#powerHint').textContent = !t ? '选择下方隧道后开启'
+  $('#powerHint').textContent = !t ? '双击卡片或点此处开关隧道'
     : st === 'up' ? '点击断开隧道' : '点击开启隧道';
 }
 
@@ -101,43 +102,9 @@ async function refresh() {
   renderAll();
 }
 
-/* ---------------- 交互 ---------------- */
-$('#tunnelList').addEventListener('click', async e => {
-  const del = e.target.closest('[data-del]');
-  if (del) {
-    e.stopPropagation();
-    const f = del.dataset.del;
-    if (states[f] === 'up') { toast('请先关闭隧道再移除', 'err'); return; }
-    window.wgc.unwatch(f); watchSet.delete(f);
-    const r = await window.wgc.deleteTunnel(f);
-    tunnels = r.tunnels; if (selected === f) selected = null;
-    renderAll(); toast('已移除'); return;
-  }
-  const card = e.target.closest('.tcard'); if (!card) return;
-  selected = card.dataset.file; renderAll();
-});
-
-$('#tunnelList').addEventListener('click', async e => {
-  const tg = e.target.closest('[data-toggle]'); if (!tg) return;
-  e.stopPropagation();
-  const f = tg.dataset.toggle;
-  selected = f;
-  await toggleTunnel(f);
-  renderAll();
-});
-
-$('#tunnelList').addEventListener('click', e => {
-  const w = e.target.closest('[data-watch]'); if (!w) return;
-  e.stopPropagation();
-  const f = w.dataset.watch;
-  if (watchSet.has(f)) { watchSet.delete(f); window.wgc.unwatch(f); toast('已关闭自动更新'); }
-  else { watchSet.add(f); window.wgc.watch(f); toast('已开启自动更新：配置文件变更时自动生效'); }
-  renderList();
-});
-
+/* ---------------- 隧道开关 ---------------- */
 async function toggleTunnel(file) {
   const st = states[file] || 'down';
-  const t = tunnels.find(x => x.file === file);
   try {
     if (st === 'up') {
       states[file] = 'disconnecting'; renderAll();
@@ -158,12 +125,102 @@ async function toggleTunnel(file) {
   await refresh();
 }
 
+/* ---------------- 卡片交互：单击选中 / 双击开关 / 长按拖动排序 ---------------- */
+let suppressClick = false;   // 拖拽结束后吞掉一次 click，避免误选中
+let longFired = false;       // 本次按压是否已进入长按拖拽
+
+const listClickHandler = async e => {
+  const del = e.target.closest('[data-del]');
+  if (del) {
+    e.stopPropagation();
+    const f = del.dataset.del;
+    if (states[f] === 'up') { toast('请先关闭隧道再移除', 'err'); return; }
+    window.wgc.unwatch(f); watchSet.delete(f);
+    const r = await window.wgc.deleteTunnel(f);
+    tunnels = r.tunnels; if (selected === f) selected = null;
+    renderAll(); toast('已移除'); return;
+  }
+  const tg = e.target.closest('[data-toggle]');
+  if (tg) {
+    e.stopPropagation();
+    const f = tg.dataset.toggle; selected = f;
+    toggleTunnel(f).then(renderAll);
+    return;
+  }
+  const w = e.target.closest('[data-watch]');
+  if (w) {
+    e.stopPropagation();
+    const f = w.dataset.watch;
+    if (watchSet.has(f)) { watchSet.delete(f); window.wgc.unwatch(f); toast('已关闭自动更新'); }
+    else { watchSet.add(f); window.wgc.watch(f); toast('已开启自动更新：配置文件变更时自动生效'); }
+    renderList(); return;
+  }
+  /* 卡片本体：单击 = 选中（开关由 dblclick 处理） */
+  if (suppressClick || longFired) { suppressClick = false; longFired = false; return; }
+  const card = e.target.closest('.tcard'); if (!card) return;
+  selected = card.dataset.file; renderAll();
+};
+$('#tunnelList').addEventListener('click', e => listClickHandler(e));
+$('#tunnelList').addEventListener('dblclick', e => {
+  if (e.target.closest('[data-del],[data-watch],[data-toggle]')) return;
+  const card = e.target.closest('.tcard'); if (!card) return;
+  const f = card.dataset.file; selected = f;
+  toggleTunnel(f).then(renderAll);
+});
+
+/* 长按 450ms 进入拖拽；拖动经过兄弟卡片中线即实时换位；松手持久化顺序 */
+const listEl = $('#tunnelList');
+let drag = null;             // {el, startY, timer, active}
+listEl.addEventListener('pointerdown', e => {
+  if (e.button !== 0 && e.pointerType === 'mouse') return;
+  const card = e.target.closest('.tcard'); if (!card) return;
+  if (e.target.closest('[data-del],[data-watch],[data-toggle]')) return;
+  longFired = false;
+  drag = { el: card, startY: e.clientY, active: false,
+    timer: setTimeout(() => { if (!drag) return; drag.active = true; longFired = true; suppressClick = true;
+      card.classList.add('dragging'); document.body.classList.add('dragging'); }, 450) };
+});
+document.addEventListener('pointermove', e => {
+  if (!drag) return;
+  if (!drag.active) {
+    if (Math.abs(e.clientY - drag.startY) > 8) clearTimeout(drag.timer);   // 位移取消长按
+    return;
+  }
+  e.preventDefault();
+  const dy = e.clientY - drag.startY;
+  drag.el.style.transform = 'translateY(' + dy + 'px)';
+  for (const s of [...listEl.children].filter(c => c !== drag.el)) {
+    const r = s.getBoundingClientRect(), mid = r.top + r.height / 2;
+    if (dy > 0 && e.clientY > mid && s.nextSibling !== drag.el) {
+      listEl.insertBefore(drag.el, s.nextSibling); drag.startY = e.clientY; drag.el.style.transform = 'none'; break;
+    }
+    if (dy < 0 && e.clientY < mid && s.previousElementSibling !== drag.el) {
+      listEl.insertBefore(drag.el, s); drag.startY = e.clientY; drag.el.style.transform = 'none'; break;
+    }
+  }
+}, { passive: false });
+document.addEventListener('pointerup', async () => {
+  if (!drag) return;
+  clearTimeout(drag.timer);
+  const wasDrag = drag.active;
+  if (wasDrag) {
+    drag.el.classList.remove('dragging'); document.body.classList.remove('dragging');
+    drag.el.style.transform = '';
+    const files = [...listEl.children].map(c => c.dataset.file);
+    const r = await window.wgc.saveOrder(files);
+    tunnels = r.tunnels; renderAll();
+  }
+  drag = null;
+  if (wasDrag) setTimeout(() => { suppressClick = false; longFired = false; }, 60);
+});
+
+/* 主电源按钮 */
 $('#btnPower').addEventListener('click', () => { if (selected) toggleTunnel(selected).then(renderAll); });
 
 $('#btnImport').addEventListener('click', async () => {
   const r = await window.wgc.importConf();
   if (!r.canceled) {
-    r.imported.forEach(f => window.wgc.watch(f) && watchSet.add(f));
+    r.imported.forEach(f => { window.wgc.watch(f); watchSet.add(f); });
     tunnels = r.tunnels;
     if (!selected && tunnels.length) selected = tunnels[0].file;
     await refresh();
@@ -201,6 +258,14 @@ $$('.tb-btn').forEach(b => b.addEventListener('click', () => {
   else if (a === 'close') window.wgc.winClose();
   else if (a === 'ext') window.wgc.openExternal(b.dataset.url);
 }));
+
+/* 主进程状态广播（托盘/快捷面板改动后主界面同步） */
+window.wgc.onStatesChanged(({ states: s }) => {
+  for (const [f, v] of Object.entries(s)) {
+    if (!['connecting', 'disconnecting'].includes(states[f])) states[f] = v;
+  }
+  renderAll();
+});
 
 /* 配置自动更新：主进程监视到文件变化 → 刷新列表；隧道在线则自动重下发 */
 window.wgc.onConfChanged(async ({ file, tunnels: ts }) => {

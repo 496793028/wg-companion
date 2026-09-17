@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('wgc', {
   watch: f => ipcRenderer.invoke('watch-tunnel', f),
   unwatch: f => ipcRenderer.invoke('unwatch-tunnel', f),
   onConfChanged: cb => ipcRenderer.on('conf-changed', (_e, data) => cb(data)),
+  onStatesChanged: cb => ipcRenderer.on('states-changed', (_e, data) => cb(data)),
+  saveOrder: files => ipcRenderer.invoke('save-order', files),
   winMin: () => ipcRenderer.send('win-min'),
   winMax: () => ipcRenderer.send('win-max'),
   winClose: () => ipcRenderer.send('win-close'),
