@@ -64,15 +64,20 @@
     <section class="side app-in">
       <div class="side-hd">
         <h2>我的隧道</h2>
-        <button class="btn primary" data-act="import" id="btnImport">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-          导入配置
-        </button>
+        <div class="side-hd-acts">
+          <button class="tb-btn" id="btnSettings" title="设置" style="-webkit-app-region:no-drag">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+          <button class="btn primary" data-act="import" id="btnImport">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            导入配置
+          </button>
+        </div>
       </div>
       <div class="tunnels" id="tunnelList"></div>
       <div class="empty" id="emptyTip">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
-        <p>把 wg-web 下载的 <b>.conf</b> 拖进来，或点击「导入配置」。<br>配置变更后重新下载到本地即可自动更新。</p>
+        <p>把 wg-web 下载的 <b>.conf</b> 拖进来，或点击「导入配置」。<br>服务端下发的配置会按间隔自动拉取更新（设置中可调整）。</p>
       </div>
       <div class="plat-tip" id="platTip"></div>
     </section>
@@ -80,6 +85,25 @@
 
   <div class="drop-mask" id="dropMask"><div class="drop-inner">松开导入配置文件</div></div>
   <div class="toast-wrap" id="toastWrap"></div>
+
+  <!-- 设置弹窗 -->
+  <div class="modal-mask" id="settingsModal" hidden>
+    <div class="modal">
+      <div class="modal-hd"><h3>设置</h3><button class="modal-x" id="btnSettingsClose" aria-label="关闭">✕</button></div>
+      <div class="modal-bd">
+        <label class="row"><span>服务端自动更新</span><input type="checkbox" id="cfgAutoUpdate"></label>
+        <p class="hint">开启后，客户端按间隔从 wg-web 拉取最新配置并自动生效（仅服务端下发的配置参与）。</p>
+        <label class="row"><span>检查间隔（秒）</span><input type="number" id="cfgInterval" min="10" max="3600" step="5" value="30"></label>
+        <label class="row"><span>允许自签名证书</span><input type="checkbox" id="cfgInsecure"></label>
+        <p class="hint">内网部署常用自签名 HTTPS；开启后仅放松 TLS 校验，不影响传输加密。</p>
+        <div class="modal-acts">
+          <button class="btn" id="btnSyncNow">立即检查更新</button>
+          <button class="btn primary" id="btnSettingsSave">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

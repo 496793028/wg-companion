@@ -6,7 +6,12 @@
 
 /* ---- wg-meta 元数据（wg-web 生成的首行注释）----
  * 格式：# wg-meta v1 <base64(utf8 json)>
- * json = { v:1, name:'真实姓名', mode:'allow'|'deny', proxy:0|1, nets:['10.100.0.0/24', ...] } */
+ * json = {
+ *   v:1, name:'真实姓名', mode:'allow'|'deny', proxy:0|1, nets:[...],
+ *   server:'https://vpn.example.com',  // 服务端基址（自动更新用）
+ *   token:'<每账号只读令牌>',          // 自动更新拉取凭据
+ *   id: 12                              // 账号 id（自动更新用）
+ * } */
 function parseMeta(text) {
   const m = /^\s*#\s*wg-meta\s+v1\s+([A-Za-z0-9+/=]+)\s*$/m.exec(text);
   if (!m) return null;
@@ -18,6 +23,9 @@ function parseMeta(text) {
       mode: obj.mode === 'deny' ? 'deny' : 'allow',
       proxy: obj.proxy ? 1 : 0,
       nets: Array.isArray(obj.nets) ? obj.nets.map(String) : [],
+      server: typeof obj.server === 'string' ? obj.server.replace(/\/+$/, '') : '',
+      token: typeof obj.token === 'string' ? obj.token : '',
+      id: obj.id != null ? String(obj.id) : '',
     };
   } catch { return null; }
 }
@@ -56,7 +64,12 @@ function parseConf(text, fileName) {
   const heuristic = allNets.includes('0.0.0.0/0') ? 'global' : 'allow';
   const mode = meta ? (meta.proxy ? 'proxy' : (meta.mode === 'deny' ? 'deny' : 'allow')) : heuristic;
   const nets = allNets.filter(n => n !== '0.0.0.0/0');
-  return { meta, name: displayName, mode, nets, iface, peer, fileName: fileName || '' };
+  return {
+    meta, name: displayName, mode, nets, iface, peer, fileName: fileName || '',
+    server: meta ? meta.server : '',
+    token: meta ? meta.token : '',
+    accountId: meta ? meta.id : '',
+  };
 }
 
 /* ---- 模式徽章文案 ---- */

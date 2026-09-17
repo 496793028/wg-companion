@@ -112,9 +112,6 @@ class MainActivity : ComponentActivity() {
     }
 
     /* ---------- UI ---------- */
-    private fun setContent(screen: @Composable () -> Unit) =
-        androidx.activity.compose.setContent { screen() }
-
     @Composable
     private fun WgcScreen() {
         var tunnels by remember { mutableStateOf(loadTunnels()) }
