@@ -334,6 +334,7 @@ $('#btnUpdateClose') && $('#btnUpdateClose').addEventListener('click', () => { c
  * 「保存密码」用系统级安全存储（Electron safeStorage）加密，绝不落明文。
  * 关闭确认弹窗也在此：主进程拦截窗口关闭后通过 onAskClose 请求渲染端展示华丽弹窗。 */
 let acctState = { history: [], secure: true };
+let pwdFromSaved = false;   // 密码是否来自「已保存的安全存储」回填（此时禁止显示、输入即清空）
 const $lg = id => document.getElementById(id);
 
 async function reloadAccounts() {
@@ -372,6 +373,14 @@ function setHint(msg, type) {
   h.textContent = msg || '';
   h.className = 'lg-hint' + (msg ? ' show ' + (type || 'err') : '');
 }
+/* 显示密码按钮：来自安全存储的回填密码 -> 置灰禁用，且不可切换为明文 */
+function setEyeDisabled(on) {
+  const eye = $lg('lgEye'), p = $lg('lgPass'); if (!eye) return;
+  eye.classList.toggle('disabled', !!on);
+  eye.disabled = !!on;
+  eye.title = on ? '保存的密码不可显示' : '显示密码';
+  if (on) { p.type = 'password'; eye.classList.remove('on'); }
+}
 function openLogin() {
   const m = $lg('loginMask'); if (!m) return;
   m.hidden = false;
@@ -384,6 +393,7 @@ function openLogin() {
     s.value = cfg.server || '';
     if (!u.value) u.value = first.username || '';
     $lg('lgPass').value = '';
+    pwdFromSaved = false; setEyeDisabled(false);   // 每次打开面板重置密码来源与显示按钮状态
     $lg('lgRemember').checked = !!first.remember;
     $lg('lgAuto').checked = !!first.autoLogin;
     const rk = $lg('lgRemember'), ak = $lg('lgAuto');
@@ -439,7 +449,11 @@ function showHist(filter) {
       if (e.target.closest('[data-del]')) return;
       $lg('lgUser').value = user; $lg('lgServer').value = server;
       const r = await window.wgc.accountsGetPassword({ server, username: user });
-      if (r && r.password) $lg('lgPass').value = r.password;      /* 曾保存密码 -> 一并填入 */
+      if (r && r.password) {
+        $lg('lgPass').value = r.password;      /* 曾保存密码 -> 一并填入 */
+        pwdFromSaved = true;                   /* 来自安全存储：禁止显示、输入即清空 */
+        setEyeDisabled(true);
+      } else { pwdFromSaved = false; setEyeDisabled(false); }
       const rec = acctState.history.find(x => x.username === user && x.server === server) || {};
       $lg('lgRemember').checked = !!rec.remember;
       $lg('lgAuto').checked = !!rec.autoLogin;
@@ -516,10 +530,16 @@ $lg('lgSubmit').addEventListener('click', submitLogin);
 $lg('lgPass').addEventListener('keydown', e => { if (e.key === 'Enter') submitLogin(); });
 $lg('lgUser').addEventListener('keydown', e => { if (e.key === 'Enter') $lg('lgPass').focus(); });
 $lg('lgEye').addEventListener('click', () => {
+  if ($lg('lgEye').classList.contains('disabled')) return;   // 保存的密码禁止显示
   const p = $lg('lgPass'), show = p.type === 'password';
   p.type = show ? 'text' : 'password';
   $lg('lgEye').classList.toggle('on', show);
   $lg('lgEye').title = show ? '隐藏密码' : '显示密码';
+});
+/* 回填的密码：聚焦时全选，使首次输入即替换掉整段密文；输入时清掉「来自保存密码」标记并恢复显示按钮 */
+$lg('lgPass').addEventListener('focus', () => { if (pwdFromSaved) $lg('lgPass').select(); });
+$lg('lgPass').addEventListener('input', () => {
+  if (pwdFromSaved) { pwdFromSaved = false; setEyeDisabled(false); }
 });
 $lg('lgUser').addEventListener('focus', () => showHist($lg('lgUser').value));
 $lg('lgUser').addEventListener('input', () => showHist($lg('lgUser').value));

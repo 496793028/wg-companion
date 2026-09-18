@@ -289,6 +289,8 @@ body.dragging .tcard{pointer-events:none}
 .lg-eye svg{width:16px;height:16px}
 .lg-eye:hover{color:var(--txt);background:var(--line2)}
 .lg-eye.on{color:var(--accent)}
+.lg-eye.disabled{color:var(--line2);opacity:.4;cursor:not-allowed}
+.lg-eye.disabled:hover{background:transparent}
 /* 历史用户名下拉：点击用户名框展开，输入即筛选，无匹配自动消失 */
 .lg-hist{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:5;max-height:214px;overflow:auto;
   background:var(--panel);border:1px solid var(--line2);border-radius:12px;box-shadow:var(--shadow);padding:5px;

@@ -415,6 +415,8 @@ class MainActivity : ComponentActivity() {
         var remember by remember { mutableStateOf(false) }
         var autoLogin by remember { mutableStateOf(false) }
         var showPwd by remember { mutableStateOf(false) }
+        var fromSaved by remember { mutableStateOf(false) }   // 密码是否来自「已保存的安全存储」回填（此时禁止显示、输入即清空）
+        var savedPwdLen by remember { mutableStateOf(0) }     // 回填的保存密码长度，用于首次输入时精准剥离
         var showHist by remember { mutableStateOf(true) }
         var busy by remember { mutableStateOf(false) }
         var hint by remember { mutableStateOf("") }
@@ -498,8 +500,13 @@ class MainActivity : ComponentActivity() {
                                             remember = h.remember; autoLogin = h.autoLogin
                                             if (h.hasPwd) {
                                                 val saved = AccountStore.password(ctx, h.server, h.username)
-                                                if (saved.isNotEmpty()) pwd = saved   /* 曾保存密码 -> 一并回填 */
-                                            }
+                                                if (saved.isNotEmpty()) {
+                                                    pwd = saved                       /* 曾保存密码 -> 一并回填 */
+                                                    fromSaved = true                  /* 来自安全存储：禁止显示、输入即清空 */
+                                                    savedPwdLen = saved.length
+                                                    showPwd = false
+                                                } else { pwd = ""; fromSaved = false; savedPwdLen = 0 }
+                                            } else { pwd = ""; fromSaved = false; savedPwdLen = 0 }
                                             showHist = false; hint = ""
                                         }) {
                                             Text(h.username, color = textClr, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
@@ -521,13 +528,26 @@ class MainActivity : ComponentActivity() {
 
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
-                        value = pwd, onValueChange = { pwd = it },
+                        value = pwd,
+                        onValueChange = { nv ->
+                            /* 用户开始修改回填的保存密码：先清空（剥离已保存密文段），恢复显示按钮 */
+                            if (fromSaved) {
+                                pwd = if (nv.length > savedPwdLen) nv.substring(savedPwdLen) else ""
+                                fromSaved = false; showPwd = false; savedPwdLen = 0
+                            } else pwd = nv
+                        },
                         label = { Text("密码") },
                         singleLine = true,
-                        visualTransformation = if (showPwd) VisualTransformation.None else PasswordVisualTransformation(),
+                        visualTransformation = if (showPwd && !fromSaved) VisualTransformation.None else PasswordVisualTransformation(),
                         trailingIcon = {
-                            TextButton(onClick = { showPwd = !showPwd }) {
-                                Text(if (showPwd) "隐藏" else "显示", fontSize = 11.5.sp, color = dimClr)
+                            if (fromSaved) {
+                                TextButton(onClick = {}, enabled = false) {
+                                    Text("显示", fontSize = 11.5.sp, color = faintClr)
+                                }
+                            } else {
+                                TextButton(onClick = { showPwd = !showPwd }) {
+                                    Text(if (showPwd) "隐藏" else "显示", fontSize = 11.5.sp, color = dimClr)
+                                }
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
