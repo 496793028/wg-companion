@@ -107,6 +107,27 @@ body{
 .btn:active{transform:translateY(0) scale(.97)}
 .btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border-color:transparent;color:#fff;
   box-shadow:0 6px 20px -8px rgba(76,141,255,.55)}
+
+/* ---- 登录按钮：与「导入配置」同尺寸同质感（圆角/内边距/图标大小/光晕一致），配色换成鎏金以区分 ----
+ * 未登录：鎏金 + 「登录」
+ * 已登录：显示账号名；**鼠标悬停**时整颗按钮交叉淡入为红色，图标与文案一并变成「退出」，点击即退出账号 */
+.btn.login{background:linear-gradient(135deg,#b8901f,#e3c65a);border-color:transparent;color:#231a05;font-weight:600;
+  box-shadow:0 6px 20px -8px rgba(212,175,55,.5);
+  transition:transform .15s,box-shadow .25s,border-color .2s,color .2s}
+.btn.login:hover{transform:translateY(-1px);border-color:transparent;box-shadow:0 8px 24px -8px rgba(212,175,55,.72)}
+.btn.login:active{transform:translateY(0) scale(.97)}
+/* 红色变化层：渐变之间无法平滑插值，故叠一层红色渐变做透明度交叉淡入 */
+.btn.login::before{content:'';position:absolute;inset:0;opacity:0;
+  background:linear-gradient(135deg,#a81f18,#e5484d);transition:opacity .22s ease}
+.btn.login>*{position:relative;z-index:1}
+.btn.login.is-in:hover{color:#fff;box-shadow:0 8px 26px -6px rgba(229,72,77,.8)}
+.btn.login.is-in:hover::before{opacity:1}
+.btn.login .lg-exit{display:none}
+.btn.login .lg-ico-out{display:none}
+.btn.login.is-in:hover .lg-label,
+.btn.login.is-in:hover .lg-ico-in{display:none}
+.btn.login.is-in:hover .lg-exit,
+.btn.login.is-in:hover .lg-ico-out{display:inline}
 .tunnels{flex:1;overflow:auto;display:flex;flex-direction:column;gap:12px;padding-right:4px;min-height:0}
 .tunnels::-webkit-scrollbar{width:8px}
 .tunnels::-webkit-scrollbar-thumb{background:var(--line2);border-radius:8px}
@@ -159,14 +180,15 @@ body.dragging .tcard{pointer-events:none}
 @keyframes breathe{from{transform:scale(1)}to{transform:scale(1.05)}}
 
 /* Toast */
-.toast-wrap{position:fixed;top:56px;right:18px;display:flex;flex-direction:column;gap:9px;z-index:70}
+/* Toast：按需求放在**左下角**（动画自左侧滑入滑出） */
+.toast-wrap{position:fixed;left:18px;bottom:18px;display:flex;flex-direction:column;gap:9px;z-index:70}
 .toast{padding:10px 16px;border-radius:12px;background:var(--panel);border:1px solid var(--line2);
   font-size:12.5px;box-shadow:var(--shadow);animation:toastIn .35s var(--ease)}
 .toast.err{border-color:rgba(229,72,77,.5);color:#ffb4b9}
 .toast.ok{border-color:rgba(47,208,123,.5)}
-@keyframes toastIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
+@keyframes toastIn{from{opacity:0;transform:translateX(-30px)}to{opacity:1;transform:none}}
 .toast.out{animation:toastOut .3s var(--ease) forwards}
-@keyframes toastOut{to{opacity:0;transform:translateX(30px)}}
+@keyframes toastOut{to{opacity:0;transform:translateX(-30px)}}
 
 /* ---- 设置弹窗 ---- */
 .side-hd-acts{display:flex;gap:8px;align-items:center}
@@ -215,7 +237,8 @@ body.dragging .tcard{pointer-events:none}
 .acct-badge{font-size:10px;color:var(--ok);display:inline-flex;align-items:center;gap:3px;margin-left:6px;
   padding:1px 7px;border:1px solid rgba(47,208,123,.35);border-radius:999px;background:rgba(47,208,123,.10);vertical-align:middle}
 .acct-badge svg{width:11px;height:11px}
-#btnLogin.on{border-color:rgba(47,208,123,.5);color:var(--ok)}
+/* 已登录：主色仍是鎏金，加一圈内描边表示「当前已连着账号」 */
+.btn.login.is-in{box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),0 6px 20px -8px rgba(212,175,55,.55)}
 
 .login-mask{position:fixed;inset:0;z-index:90;display:grid;place-items:center;
   background:radial-gradient(900px 560px at 72% -6%, rgba(76,141,255,.14), transparent 58%), rgba(5,9,15,.74);
@@ -351,3 +374,25 @@ body.dragging .tcard{pointer-events:none}
 .exit-btn.quit:hover{border-color:rgba(229,72,77,.6);color:var(--danger);box-shadow:0 12px 30px -14px rgba(229,72,77,.55)}
 .exit-btn.quit:hover .eb-ico{background:rgba(229,72,77,.16);color:var(--danger)}
 .exit-remember{justify-content:center;margin-top:16px}
+
+/* ============ 亮色主题（Light）============ */
+:root[data-theme="light"]{
+  --bg:#f0f2f7; --panel:#ffffff; --panel2:#f4f5fa; --line:#dde1ed; --line2:#c8cee0;
+  --txt:#161c2e; --dim:#5e6a82; --faint:#8a96b0;
+  --shadow:0 16px 44px -20px rgba(0,0,0,.12);
+}
+[data-theme="light"] .titlebar{background:rgba(248,249,252,.85)}
+[data-theme="light"] .btn-power{background:linear-gradient(165deg,#eef2f8,#e2e6f0)}
+[data-theme="light"] .ripple{background:rgba(0,0,0,.12)}
+[data-theme="light"] .drop-mask{background:rgba(220,225,235,.65)}
+[data-theme="light"] .modal-mask{background:rgba(200,208,225,.52)}
+[data-theme="light"] .login-mask{background:radial-gradient(800px 480px at 72% -6%,rgba(76,141,255,.08),transparent 58%),rgba(210,218,235,.66)}
+[data-theme="light"] .exit-mask{background:rgba(200,208,225,.56)}
+[data-theme="light"] .login-card,
+[data-theme="light"] .exit-card{box-shadow:0 24px 64px -24px rgba(0,0,0,.18)}
+[data-theme="light"] .eb-shine{background:linear-gradient(90deg,transparent,rgba(0,0,0,.08),transparent)}
+[data-theme="light"] .lg-submit .lg-spin{border-color:rgba(0,0,0,.16); border-top-color:#222}
+[data-theme="light"] .tcard.dragging{box-shadow:0 14px 34px -10px rgba(0,0,0,.22),0 0 0 1px var(--accent) inset,0 0 14px rgba(76,141,255,.25)}
+[data-theme="light"] .update-banner{background:linear-gradient(135deg,rgba(76,141,255,.08),rgba(139,92,246,.08))}
+[data-theme="light"] .ring-fg{stroke:url(#gIdleL)}
+[data-theme="light"] .version-tag{opacity:.6}

@@ -341,13 +341,31 @@ async function reloadAccounts() {
   catch { acctState = { history: [], secure: true }; }
   return acctState;
 }
-/* 登录按钮文案：已登录则显示账号名并高亮 */
+/* 登录按钮状态：已登录 -> 显示账号名并加 .is-in（悬停由 CSS 变红、文案变「退出」）；未登录 -> 「登录」 */
 function refreshLoginBtn() {
   const t = $lg('btnLoginTxt'), btn = $lg('btnLogin');
   if (!t || !btn) return;
   const acct = tunnels.find(x => x.account);
-  if (acct) { t.textContent = acct.accountUser || '账号'; btn.classList.add('on'); btn.title = `已登录：${acct.accountUser || ''}（点击管理 / 退出）`; }
-  else { t.textContent = '登录'; btn.classList.remove('on'); btn.title = '登录 wg-web 账号，自动拉取你的配置并置顶显示'; }
+  if (acct) {
+    t.textContent = acct.accountUser || '账号';
+    btn.classList.add('is-in');
+    btn.title = `已登录：${acct.accountUser || ''} —— 点击退出登录（会删除该账号自动拉取的配置）`;
+  } else {
+    t.textContent = '登录';
+    btn.classList.remove('is-in');
+    btn.title = '登录 wg-web 账号，自动拉取你的配置并置顶显示';
+  }
+}
+/* 退出账号：删除该账号自动拉取的配置（历史条目与已保存的密码保留） */
+async function doLogout() {
+  const confs = tunnels.filter(x => x.account);
+  if (!confs.length) return;
+  const r = await window.wgc.logout({ server: confs[0].accountServer, username: confs[0].accountUser });
+  await refresh();
+  toast(`已退出登录，删除 ${(r && r.removed) || 0} 个配置`);
+  await reloadAccounts();
+  renderAcctFooter();
+  refreshLoginBtn();
 }
 function setHint(msg, type) {
   const h = $lg('lgHint'); if (!h) return;
@@ -395,12 +413,9 @@ function renderAcctFooter() {
       <i class="mono">${esc(String(acct.accountServer || '').replace(/^https?:\/\//, ''))}</i></span>
     <button class="lg-out" id="lgLogout">退出登录</button>`;
   $lg('lgLogout').onclick = async () => {
-    const confs = tunnels.filter(x => x.account);
-    if (!confs.length) return;
+    if (!tunnels.some(x => x.account)) return;
     if (!confirm('退出登录会同时删除该账号自动拉取的配置，确定继续？')) return;
-    const r = await window.wgc.logout({ server: confs[0].accountServer, username: confs[0].accountUser });
-    await refresh(); toast(`已退出登录，删除 ${(r && r.removed) || 0} 个配置`);
-    await reloadAccounts(); renderAcctFooter(); refreshLoginBtn();
+    await doLogout();
   };
 }
 /* ---- 历史用户名下拉 ---- */
@@ -481,7 +496,20 @@ function exitDecision(act) {
 }
 
 /* ---- 账号区事件绑定 ---- */
-$lg('btnLogin').addEventListener('click', openLogin);
+$lg('btnTheme').addEventListener('click', () => {
+  const el = document.documentElement;
+  const goLight = !el.dataset.theme || el.dataset.theme !== 'light';
+  el.dataset.theme = goLight ? 'light' : 'dark';
+  localStorage.setItem('wgc-theme', goLight ? 'light' : 'dark');
+  toast(goLight ? '已切换为浅色主题' : '已切换为深色主题');
+});
+/* 登录按钮是**双态**的：
+ *  · 未登录 -> 点击打开登录面板
+ *  · 已登录 -> 按钮显示账号名，悬停即整体变红并显示「退出」，点击直接退出账号 */
+$lg('btnLogin').addEventListener('click', () => {
+  if (tunnels.some(x => x.account)) return doLogout();
+  openLogin();
+});
 $lg('btnLoginClose').addEventListener('click', closeLogin);
 $lg('loginMask').addEventListener('click', e => { if (e.target === $lg('loginMask')) closeLogin(); });
 $lg('lgSubmit').addEventListener('click', submitLogin);
