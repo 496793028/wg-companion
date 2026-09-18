@@ -126,6 +126,7 @@ class MainActivity : ComponentActivity() {
             AccountStore.markTunnel(this@MainActivity, "$name.conf", srv, username)
             AccountStore.remember(this@MainActivity, srv, username, remember, autoLogin,
                 if (remember) password else null)
+            AccountStore.setLastServer(this@MainActivity, srv)   // 登录成功才记住服务器地址
         }
         return true to r.name.ifEmpty { username }
     }
@@ -397,8 +398,11 @@ class MainActivity : ComponentActivity() {
         ) }
 
         LaunchedEffect(Unit) {
+            /* 服务器地址回填「上次**成功登录过**的那个地址」（不是从别处猜 —— 避免把
+               127.0.0.1 这类只对本机有效的地址当默认值填进去） */
+            server = AccountStore.lastServer(ctx)
             val h = hist.firstOrNull()
-            if (h != null) { server = h.server; user = h.username; remember = h.remember; autoLogin = h.autoLogin }
+            if (h != null) { user = h.username; remember = h.remember; autoLogin = h.autoLogin }
             if (!secure) { remember = false; autoLogin = false }
         }
 
@@ -424,8 +428,12 @@ class MainActivity : ComponentActivity() {
                     OutlinedTextField(
                         value = server, onValueChange = { server = it },
                         label = { Text("服务器地址") },
-                        placeholder = { Text("https://vpn.example.com") },
+                        placeholder = { Text("http://192.168.1.10:8787") },
                         singleLine = true, modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "填写客户端能访问到的 wg-web 平台地址（含端口）——内网形如 http://192.168.1.10:8787；若平台有对外域名或反向代理，则填 https://vpn.example.com。登录成功后会自动记住该地址。",
+                        color = Color(0xFF5C6A7F), fontSize = 10.5.sp, lineHeight = 15.sp
                     )
 
                     Spacer(Modifier.height(10.dp))

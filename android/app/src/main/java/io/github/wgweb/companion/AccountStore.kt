@@ -32,6 +32,7 @@ object AccountStore {
     private const val PREF = "wgc_accounts"
     private const val K_HISTORY = "history"
     private const val K_TUNNELS = "tunnels"
+    private const val K_LAST_SERVER = "last_server"
     private const val KEYSTORE = "AndroidKeyStore"
     private const val ALIAS = "wgc_pwd_key_v1"
 
@@ -162,5 +163,14 @@ object AccountStore {
     fun clearTunnelMarks(c: Context, files: List<String>) {
         val o = tunnels(c); files.forEach { o.remove(it) }
         prefs(c).edit().putString(K_TUNNELS, o.toString()).apply()
+    }
+
+    /* ---------------- 上次成功登录的服务器地址 ----------------
+     * **只在登录成功后写入**；登录页打开时回填它（而不是从别处猜地址 —— 曾出现把
+     * 127.0.0.1 这类只对本机有效的地址当作默认值填进去，反而误导）。 */
+    fun lastServer(c: Context): String = prefs(c).getString(K_LAST_SERVER, "") ?: ""
+
+    fun setLastServer(c: Context, server: String) {
+        prefs(c).edit().putString(K_LAST_SERVER, server.trim()).apply()
     }
 }
