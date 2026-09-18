@@ -38,6 +38,8 @@ import com.wireguard.android.backend.Tunnel
 import com.wireguard.config.Config
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
@@ -61,10 +63,14 @@ class MainActivity : ComponentActivity() {
 
     private var pendingToggle: Pair<Boolean, File>? = null
 
+    /* 账号配置自动同步信号：自增后触发 WgcScreen 重新加载隧道列表 */
+    private val syncSignal = mutableStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         intent?.data?.let { importConf(it) }
         setContent { WgcScreen() }
+        startAutoSyncLoop()
     }
 
     /* ---------- 数据 ---------- */
@@ -202,6 +208,47 @@ class MainActivity : ComponentActivity() {
         override fun onStateChange(newState: Tunnel.State) {}
     }
 
+    /* ---------- 账号配置服务端自动同步（与桌面端 autoSyncTick 对齐） ---------- */
+    /* 启动后延迟 3s 再开始，随后每 30s 轮询一次：仅处理「账号登录拉取」的隧道
+       （其 .conf 内含 wg-meta 的只读 server/token/id），凭 token 拉取最新配置，
+       内容有变更则落盘，若隧道当前为 UP 则先 DOWN 再 UP 使其生效。 */
+    private fun startAutoSyncLoop() {
+        lifecycleScope.launch {
+            delay(3000)
+            while (isActive) {
+                try { syncAccountConfigs() } catch (_: Exception) {}
+                delay(30_000)
+            }
+        }
+    }
+
+    private suspend fun syncAccountConfigs() {
+        val dir = tunnelDir()
+        val files = dir.listFiles { f -> f.name.endsWith(".conf") } ?: emptyArray()
+        for (f in files) {
+            val text = try { f.readText() } catch (_: Exception) { continue }
+            AccountStore.tunnelOwner(this, f.name) ?: continue   // 仅处理账号登录拉取的隧道
+            val meta = ConfMeta.parseSyncMeta(text) ?: continue
+            if (meta.server.isEmpty() || meta.token.isEmpty()) continue
+            val newConf = withContext(Dispatchers.IO) { LoginApi.confByToken(meta.server, meta.token) } ?: continue
+            val normOld = text.trim().replace(Regex("\\r\\n"), "\n")
+            val normNew = newConf.trim().replace(Regex("\\r\\n"), "\n")
+            if (normNew == normOld) continue   // 无变更，跳过
+            val wasUp = try {
+                WgcApp.backend.getState(SimpleTunnel(f.nameWithoutExtension)) == Tunnel.State.UP
+            } catch (_: Exception) { false }
+            withContext(Dispatchers.IO) { f.writeText(newConf) }
+            if (wasUp) {
+                try {
+                    WgcApp.backend.setState(SimpleTunnel(f.nameWithoutExtension), Tunnel.State.DOWN, null)
+                    val config = withContext(Dispatchers.IO) { Config.parse(BufferedReader(f.reader())) }
+                    WgcApp.backend.setState(SimpleTunnel(f.nameWithoutExtension), Tunnel.State.UP, config)
+                } catch (_: Exception) {}
+            }
+        }
+        withContext(Dispatchers.Main) { syncSignal.value++ }   // 触发 UI 刷新
+    }
+
     /* ---------- UI ---------- */
     /* 主题色板：主屏 / TunnelCard / LoginDialog 三处共用，避免各 composable 各自硬编码深色 */
     private class WgcPalette(dark: Boolean) {
@@ -231,6 +278,8 @@ class MainActivity : ComponentActivity() {
         LaunchedEffect(Unit) { updateInfo = checkGitHubUpdate(appVersion) }
 
         var tunnels by remember { mutableStateOf(loadTunnels()) }
+        /* 服务端配置自动同步完成后（syncSignal 自增）刷新隧道列表与状态徽标 */
+        LaunchedEffect(syncSignal.value) { tunnels = loadTunnels() }
         var showLogin by remember { mutableStateOf(false) }
         val scope = rememberCoroutineScope()
 

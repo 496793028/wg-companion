@@ -3,6 +3,7 @@ package io.github.wgweb.companion
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import javax.net.ssl.HttpsURLConnection
@@ -92,5 +93,38 @@ object LoginApi {
         }
         val msg = json?.optString("error") ?: ""
         return Result(false, msg.ifEmpty { "登录失败（HTTP $code）" })
+    }
+
+    /* 服务端自动更新：凭每账号只读 token 拉取最新 .conf（与桌面端 fetchServerConf 对齐）。
+       GET {server}/api/client/conf?token=...；返回 conf 文本或 null（失败/无变更由调用方比对）。 */
+    fun confByToken(serverRaw: String, token: String): String? {
+        val server = normalizeServer(serverRaw)
+        if (server.isEmpty() || token.isEmpty()) return null
+        return try {
+            fetchByToken(server, token, lenient = false)
+        } catch (_: Exception) {
+            try { fetchByToken(server, token, lenient = true) } catch (_: Exception) { null }
+        }
+    }
+
+    private fun fetchByToken(server: String, token: String, lenient: Boolean): String? {
+        val urlConn = URL("$server/api/client/conf?token=${URLEncoder.encode(token, "UTF-8")}").openConnection()
+        val conn = urlConn as HttpURLConnection
+        conn.requestMethod = "GET"
+        conn.connectTimeout = 15000
+        conn.readTimeout = 15000
+        conn.setRequestProperty("User-Agent", "wg-companion-android")
+        if (lenient && urlConn is HttpsURLConnection) {
+            urlConn.sslSocketFactory = lenientFactory()
+            urlConn.hostnameVerifier = HostnameVerifier { _, _ -> true }
+        }
+        val code = conn.responseCode
+        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+        val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
+        conn.disconnect()
+        val json = try { JSONObject(text) } catch (_: Exception) { null }
+        if (code in 200..299 && json != null && json.optString("conf").isNotEmpty())
+            return json.optString("conf")
+        return null
     }
 }

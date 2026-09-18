@@ -14,6 +14,9 @@ data class TunnelInfo(
     val address: String,
 )
 
+/* 账号配置同步凭证：wg-meta 内的 server/token/id，供服务端自动更新轮询使用（与桌面端 parseMeta 字段对齐）。 */
+data class SyncMeta(val server: String, val token: String, val id: String)
+
 object ConfMeta {
     private val LABELS = mapOf("allow" to "白名单", "deny" to "黑名单", "proxy" to "全代理")
 
@@ -40,6 +43,21 @@ object ConfMeta {
         }
         return TunnelInfo(name, mode, LABELS[mode] ?: "白名单",
             allNets.filter { it != "0.0.0.0/0" }, endpoint, ifaceAddr)
+    }
+
+    /* 解析账号配置的同步凭证（wg-meta 内的 server/token/id），供服务端自动更新轮询使用。
+       与桌面端 lib/core.js parseMeta 字段对齐。 */
+    fun parseSyncMeta(text: String): SyncMeta? {
+        val line = text.lineSequence().firstOrNull { it.trim().startsWith("# wg-meta") } ?: return null
+        return try {
+            val b64 = line.trim().split(" ")[3]
+            val obj = JSONObject(String(Base64.decode(b64, Base64.DEFAULT), Charsets.UTF_8))
+            if (obj.optInt("v") != 1) return null
+            val server = (obj.optString("server") ?: "").trimEnd('/')
+            val token = obj.optString("token") ?: ""
+            val id = if (obj.has("id")) obj.opt("id").toString() else ""
+            SyncMeta(server, token, id)
+        } catch (_: Exception) { null }
     }
 
     private fun valueOf(text: String, key: String): String =
