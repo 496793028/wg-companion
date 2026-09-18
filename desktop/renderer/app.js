@@ -360,7 +360,10 @@ function openLogin() {
   document.body.classList.add('login-open');
   reloadAccounts().then(() => {
     const s = $lg('lgServer'), u = $lg('lgUser'), first = acctState.history[0] || {};
-    if (!s.value) s.value = cfg.server || (tunnels.find(t => t.server) || {}).server || '';
+    /* 只回填「上次**成功登录过**的服务器地址」（cfg.server 仅在登录成功时写入）。
+       不再用已导入配置 wg-meta 里的 server 兜底 —— 那可能带出 127.0.0.1 这类只对
+       「下载配置的那台机器」有效的地址，反而误导。 */
+    s.value = cfg.server || '';
     if (!u.value) u.value = first.username || '';
     $lg('lgPass').value = '';
     $lg('lgRemember').checked = !!first.remember;

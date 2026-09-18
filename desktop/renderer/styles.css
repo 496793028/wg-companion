@@ -249,6 +249,10 @@ body.dragging .tcard{pointer-events:none}
 .lg-field input{width:100%;background:var(--panel2);border:1px solid var(--line2);border-radius:11px;
   color:var(--txt);padding:11px 13px;font-size:13.5px;outline:none;transition:border-color .22s,box-shadow .25s}
 .lg-field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(76,141,255,.16)}
+.lg-tip{font-size:10.5px;color:var(--faint);line-height:1.65;margin-top:1px}
+.lg-tip b{color:var(--dim)}
+.lg-tip code{font-family:Consolas,"JetBrains Mono",monospace;font-size:10px;color:var(--dim);
+  background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:0 4px}
 .lg-pw{position:relative;display:block}
 .lg-pw input{padding-right:44px}
 .lg-eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;
