@@ -212,6 +212,7 @@ ipcMain.handle('env', () => ({ platform: process.platform, wgExe: core.findWireg
 ipcMain.handle('get-cfg', () => loadCfg());
 ipcMain.handle('save-cfg', (_e, c) => { saveCfg(c || {}); startAutoSync(); return loadCfg(); });
 ipcMain.handle('sync-now', async () => { await autoSyncTick(); return { ok: true }; });
+ipcMain.handle('check-update', () => checkGitHubUpdate());
 
 ipcMain.handle('list-tunnels', () => listTunnels());
 
@@ -392,6 +393,47 @@ function startAutoSync() {
   const sec = Math.max(10, Number(cfg.autoUpdateInterval) || 30);
   syncTimer = setInterval(autoSyncTick, sec * 1000);
   setTimeout(autoSyncTick, 3000);                  // 启动后先错峰跑一次
+}
+
+/* ---------------- GitHub 更新检查 ----------------
+ * 启动时查询 GitHub Releases 最新公开版本，若有更高版本则提示用户前往下载。
+ * 仅读取公开 releases/latest，无需鉴权；网络/限流失败一律静默（不弹错）。 */
+const GITHUB_REPO = '496793028/wg-companion';
+function semverCmp(a, b) {
+  const pa = String(a).replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x > y) return 1; if (x < y) return -1;
+  }
+  return 0;
+}
+function checkGitHubUpdate() {
+  return new Promise(resolve => {
+    const cur = app.getVersion() || '0.0.0';
+    const req = https.get(
+      'https://api.github.com/repos/' + GITHUB_REPO + '/releases/latest',
+      { timeout: 12000, headers: { 'user-agent': 'wg-companion/' + cur, 'accept': 'application/vnd.github+json' } },
+      res => {
+        let body = '';
+        res.on('data', d => body += d);
+        res.on('end', () => {
+          try {
+            const j = JSON.parse(body);
+            if (!j || !j.tag_name) return resolve({ current: cur, hasUpdate: false, error: 'no_tag' });
+            const latest = String(j.tag_name).replace(/^v/i, '');
+            resolve({
+              current: cur,
+              latest: j.tag_name,
+              hasUpdate: semverCmp(latest, cur) > 0,
+              url: j.html_url || ('https://github.com/' + GITHUB_REPO + '/releases/latest'),
+            });
+          } catch { resolve({ current: cur, hasUpdate: false, error: 'parse' }); }
+        });
+      });
+    req.on('error', () => resolve({ current: cur, hasUpdate: false, error: 'net' }));
+    req.on('timeout', () => { try { req.destroy(); } catch {} resolve({ current: cur, hasUpdate: false, error: 'timeout' }); });
+  });
 }
 
 /* 窗口控制（无框窗口自绘标题栏） */

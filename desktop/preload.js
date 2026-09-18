@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('wgc', {
   getCfg: () => ipcRenderer.invoke('get-cfg'),
   saveCfg: c => ipcRenderer.invoke('save-cfg', c),
   syncNow: () => ipcRenderer.invoke('sync-now'),
+  checkUpdate: () => ipcRenderer.invoke('check-update'),
   watch: f => ipcRenderer.invoke('watch-tunnel', f),
   unwatch: f => ipcRenderer.invoke('unwatch-tunnel', f),
   onConfChanged: cb => ipcRenderer.on('conf-changed', (_e, data) => cb(data)),

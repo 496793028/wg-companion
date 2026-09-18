@@ -1,7 +1,7 @@
 {
   "name": "wg-companion",
   "productName": "WG Companion",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "wg-web 配套 WireGuard 客户端：导入配置即显示用户名/授权网段/黑白名单·全代理模式，一键开关隧道并自动更新配置（Windows / macOS / Android）",
   "main": "main.js",
   "author": "wg-web",
