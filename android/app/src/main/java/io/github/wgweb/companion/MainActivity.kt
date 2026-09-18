@@ -203,28 +203,30 @@ class MainActivity : ComponentActivity() {
     }
 
     /* ---------- UI ---------- */
+    /* 主题色板：主屏 / TunnelCard / LoginDialog 三处共用，避免各 composable 各自硬编码深色 */
+    private class WgcPalette(dark: Boolean) {
+        val surface = if (dark) Color(0xFF0B0F16) else Color(0xFFF0F2F7)
+        val card    = if (dark) Color(0xFF121926) else Color(0xFFFFFFFF)
+        val card2   = if (dark) Color(0xFF161E2D) else Color(0xFFF4F5FA)
+        val text    = if (dark) Color(0xFFE8EDF5) else Color(0xFF162C40)
+        val dim     = if (dark) Color(0xFF93A0B4) else Color(0xFF5E6A82)
+        val faint   = if (dark) Color(0xFF5C6A7F) else Color(0xFF8A96B0)
+        val line    = if (dark) Color(0xFF2A3648) else Color(0xFFC8CEE0)
+        val btn     = if (dark) Color(0xFF7C5CFF) else Color(0xFF4C6DEF)
+    }
+
     @Composable
     private fun WgcScreen() {
         val appVersion = remember {
             runCatching { packageManager.getPackageInfo(packageName, 0).versionName ?: "1.2.0" }.getOrElse { "1.2.0" }
         }
-        /* 深色 / 浅色双主题（与桌面端同款切换）：启动时从 SharedPreferences 恢复，点击 moonshot 图标切换 */
+        /* 深色 / 浅色双主题（与桌面端同款切换）：启动时从 SharedPreferences 恢复，点击 ☀️/🌙 切换 */
         val prefs = remember { getSharedPreferences("wgc_theme", MODE_PRIVATE) }
         var isDark by remember { mutableStateOf(prefs.getBoolean("is_dark", true)) }
-        val darkBg = Color(0xFF0B0F16);     val darkCard = Color(0xFF121926);      val darkCard2 = Color(0xFF161E2D)
-        val darkTxt = Color(0xFFE8EDF5);    val darkDim = Color(0xFF93A0B4);       val darkFaint = Color(0xFF5C6A7F)
-        val darkLine = Color(0xFF2A3648);   val darkBtn = Color(0xFF7C5CFF)
-        val lightBg = Color(0xFFF0F2F7);    val lightCard = Color(0xFFFFFFFF);     val lightCard2 = Color(0xFFF4F5FA)
-        val lightTxt = Color(0xFF162C40);   val lightDim = Color(0xFF5E6A82);      val lightFaint = Color(0xFF8A96B0)
-        val lightLine = Color(0xFFC8CEE0);  val lightBtn = Color(0xFF4C6DEF)
-        val surface = if (isDark) darkBg else lightBg
-        val cardBg  = if (isDark) darkCard else lightCard
-        val cardB2  = if (isDark) darkCard2 else lightCard2
-        val textClr = if (isDark) darkTxt else lightTxt
-        val dimClr  = if (isDark) darkDim else lightDim
-        val faintClr= if (isDark) darkFaint else lightFaint
-        val lineClr = if (isDark) darkLine else lightLine
-        val btnClr  = if (isDark) darkBtn else lightBtn
+        val pal = WgcPalette(isDark)
+        val surface = pal.surface; val cardBg = pal.card; val cardB2 = pal.card2
+        val textClr = pal.text; val dimClr = pal.dim; val faintClr = pal.faint
+        val lineClr = pal.line; val btnClr = pal.btn
         var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
         LaunchedEffect(Unit) { updateInfo = checkGitHubUpdate(appVersion) }
 
@@ -315,7 +317,7 @@ class MainActivity : ComponentActivity() {
                                 val intent = WgcApp.vpnPermissionIntent(this@MainActivity)
                                 if (wantUp && intent != null) { pendingToggle = wantUp to item.file; vpnPermissionLauncher.launch(intent) }
                                 else { toggle(wantUp, item.file); scope.launch { kotlinx.coroutines.delay(600); tunnels = loadTunnels() } }
-                            })
+                            }, pal = pal)
                     }
                 }
             }
@@ -325,6 +327,7 @@ class MainActivity : ComponentActivity() {
             LoginDialog(
                 onClose = { showLogin = false },
                 onChanged = { tunnels = loadTunnels() },
+                pal = pal,
             )
         }
     }
@@ -332,7 +335,9 @@ class MainActivity : ComponentActivity() {
     data class TunnelItem(val file: File, val info: TunnelInfo, val accountUser: String? = null)
 
     @Composable
-    private fun TunnelCard(t: TunnelItem, onToggle: (Boolean) -> Unit) {
+    private fun TunnelCard(t: TunnelItem, onToggle: (Boolean) -> Unit, pal: WgcPalette) {
+        val textClr = pal.text; val dimClr = pal.dim; val faintClr = pal.faint
+        val cardBg = pal.card; val cardB2 = pal.card2; val lineClr = pal.line
         val up = remember(t) { mutableStateOf(false) }
         val scale by animateFloatAsState(if (up.value) 1.012f else 0.995f, tween(280), label = "sc")
         val knobColor by animateColorAsState(if (up.value) Color(0xFF2FD07B) else dimClr, tween(260), label = "knob")
@@ -387,7 +392,7 @@ class MainActivity : ComponentActivity() {
             }
             Box(
                 Modifier.size(width = 52.dp, height = 28.dp)
-                    .background(if (up.value) Color(0x332FD07B) else Color(0xFF202A3A), CircleShape)
+                    .background(if (up.value) Color(0x332FD07B) else lineClr, CircleShape)
                     .clickable { onToggle(!up.value) },
                 contentAlignment = Alignment.CenterStart
             ) {
@@ -398,7 +403,9 @@ class MainActivity : ComponentActivity() {
 
     /* ---------- 登录面板（Dialog，华丽卡片 + 历史用户名下拉） ---------- */
     @Composable
-    private fun LoginDialog(onClose: () -> Unit, onChanged: () -> Unit) {
+    private fun LoginDialog(onClose: () -> Unit, onChanged: () -> Unit, pal: WgcPalette) {
+        val textClr = pal.text; val dimClr = pal.dim; val faintClr = pal.faint
+        val cardBg = pal.card; val cardB2 = pal.card2; val lineClr = pal.line; val btnClr = pal.btn
         val ctx = this@MainActivity
         val scope = rememberCoroutineScope()
 
