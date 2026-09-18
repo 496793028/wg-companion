@@ -6,7 +6,7 @@
  * 交互：单实例 · 托盘图标（悬停显示状态 / 点击弹快捷面板）· 关闭时可选最小化或退出
  *      · 隧道卡片双击开关 · 长按拖动排序 · 连接成功系统通知 */
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Tray, Menu, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Tray, Menu, Notification, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -30,6 +30,71 @@ const saveCfg = c => { try { fs.writeFileSync(cfgPath(), JSON.stringify(c, null,
 const orderPath = () => path.join(app.getPath('userData'), 'order.json');
 const loadOrder = () => { try { const a = JSON.parse(fs.readFileSync(orderPath(), 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; } };
 
+/* ---------------- 账号存储（历史用户名 / 安全保存的密码 / 账号配置归属） ----------------
+ * history：按「服务器 + 用户名」记录历史登录；勾选「保存密码」时用系统级加密（Electron
+ *          safeStorage：Windows DPAPI / macOS Keychain）加密后落盘，绝不存明文。
+ * tunnels：记录哪些隧道配置是登录账号自动拉取的 —— 用于置顶显示与退出时删除。 */
+const accountsPath = () => path.join(app.getPath('userData'), 'accounts.json');
+const loadAccounts = () => {
+  try {
+    const o = JSON.parse(fs.readFileSync(accountsPath(), 'utf8'));
+    return {
+      history: Array.isArray(o.history) ? o.history : [],
+      tunnels: (o.tunnels && typeof o.tunnels === 'object') ? o.tunnels : {},
+    };
+  } catch { return { history: [], tunnels: {} }; }
+};
+const saveAccounts = a => { try { fs.writeFileSync(accountsPath(), JSON.stringify(a, null, 2)); } catch {} };
+const acctKey = (server, username) => String(server || '').replace(/\/+$/, '') + '\u0000' + String(username || '');
+
+function secureAvailable() {
+  try { return safeStorage.isEncryptionAvailable(); } catch { return false; }
+}
+function encPwd(plain) {
+  if (!plain) return '';
+  try { return safeStorage.encryptString(String(plain)).toString('base64'); } catch { return ''; }
+}
+function decPwd(b64) {
+  if (!b64) return '';
+  try { return safeStorage.decryptString(Buffer.from(String(b64), 'base64')); } catch { return ''; }
+}
+/* 对外一律不暴露密文与明文，只给出「是否已保存密码」 */
+const publicAccounts = () => {
+  const a = loadAccounts();
+  return {
+    secure: secureAvailable(),
+    history: a.history.map(h => ({
+      server: h.server, username: h.username, remember: !!h.remember,
+      autoLogin: !!h.autoLogin, hasPwd: !!h.pwdEnc, lastUsed: h.lastUsed || '',
+    })).sort((x, y) => String(y.lastUsed).localeCompare(String(x.lastUsed))),
+  };
+};
+/* 记住/忘记某条历史登录 */
+function rememberAccount(server, username, remember, autoLogin, password) {
+  const a = loadAccounts();
+  const key = acctKey(server, username);
+  const i = a.history.findIndex(h => acctKey(h.server, h.username) === key);
+  const prev = i >= 0 ? a.history[i] : { server, username };
+  const entry = {
+    ...prev, server: String(server || ''), username: String(username || ''),
+    remember: !!remember, autoLogin: !!autoLogin, lastUsed: new Date().toISOString(),
+  };
+  if (remember) { if (password) entry.pwdEnc = encPwd(password); }
+  else { delete entry.pwdEnc; }
+  if (i >= 0) a.history[i] = entry; else a.history.push(entry);
+  saveAccounts(a);
+  return entry;
+}
+function markAccountTunnel(file, server, username) {
+  const a = loadAccounts();
+  a.tunnels[file] = { server: String(server || ''), username: String(username || '') };
+  saveAccounts(a);
+}
+function unmarkAccountTunnel(file) {
+  const a = loadAccounts();
+  if (a.tunnels[file]) { delete a.tunnels[file]; saveAccounts(a); }
+}
+
 /* ---------------- 隧道存储与解析 ---------------- */
 const tunnelsDir = () => path.join(app.getPath('userData'), 'tunnels');
 const ensureDir = () => { try { fs.mkdirSync(tunnelsDir(), { recursive: true }); } catch {} };
@@ -38,16 +103,22 @@ const tunnelPath = file => path.join(tunnelsDir(), path.basename(file));
 const listTunnels = () => {
   ensureDir();
   const out = [];
+  const accts = loadAccounts();
   for (const f of fs.readdirSync(tunnelsDir())) {
     if (!f.toLowerCase().endsWith('.conf')) continue;
     try {
       const text = fs.readFileSync(path.join(tunnelsDir(), f), 'utf8');
-      out.push({ file: f, ...core.parseConf(text, f) });
+      const at = accts.tunnels[f];
+      out.push({ file: f, ...core.parseConf(text, f),
+        account: !!at, accountUser: at ? at.username : '', accountServer: at ? at.server : '' });
     } catch {}
   }
   const order = loadOrder();
   const idx = f => { const i = order.indexOf(f); return i < 0 ? 9999 : i; };
-  out.sort((a, b) => idx(a.file) - idx(b.file) || a.file.localeCompare(b.file));
+  /* 登录账号自动拉取的配置恒定置顶；其余按用户拖拽顺序 */
+  out.sort((a, b) =>
+    (a.account === b.account ? 0 : (a.account ? -1 : 1)) ||
+    idx(a.file) - idx(b.file) || a.file.localeCompare(b.file));
   return out;
 };
 
@@ -118,23 +189,16 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.once('ready-to-show', () => { win.show(); win.focus(); });
 
-  /* 关闭 = 询问（最小化到托盘 / 退出），可记住选择；隧道由系统服务承载，最小化不影响连接 */
-  win.on('close', async e => {
+  /* 关闭 = 询问（最小化到托盘 / 退出），可记住选择；隧道由系统服务承载，最小化不影响连接。
+     询问界面由**渲染端自绘**（华丽弹窗 + 按钮动画），主进程只负责发事件、收决定。
+     隧道以系统服务方式运行，最小化到托盘后连接不受影响；托盘图标可随时唤回。 */
+  win.on('close', e => {
     if (quitting) return;
     const cfg = loadCfg();
     if (cfg.closeAction === 'minimize') { e.preventDefault(); win.hide(); return; }
     if (cfg.closeAction === 'quit') return;            // 不拦截，走正常退出
     e.preventDefault();
-    const r = await dialog.showMessageBox(win, {
-      type: 'question', title: 'WG Companion',
-      message: '关闭窗口时希望做什么？',
-      detail: '隧道以系统服务方式运行，最小化到托盘后连接不受影响；托盘图标可随时唤回。',
-      buttons: ['最小化到托盘', '退出程序'], defaultId: 0, cancelId: 0,
-      checkboxLabel: '记住我的选择', checkboxChecked: false,
-      noLink: true,
-    });
-    if (r.checkboxChecked) { cfg.closeAction = r.response === 0 ? 'minimize' : 'quit'; saveCfg(cfg); }
-    if (r.response === 0) { win.hide(); } else { quitting = true; app.quit(); }
+    try { win.webContents.send('ask-close'); } catch {}
   });
 }
 
@@ -200,6 +264,7 @@ if (!gotTheLock) {
     createWindow();
     createTray();
     startAutoSync();                                      // 启动服务端自动更新轮询
+    startAutoLogin();                                     // 启动自动登录（如已勾选并保存密码）
   });
 }
 app.on('before-quit', () => { quitting = true; });
@@ -213,6 +278,119 @@ ipcMain.handle('get-cfg', () => loadCfg());
 ipcMain.handle('save-cfg', (_e, c) => { saveCfg(c || {}); startAutoSync(); return loadCfg(); });
 ipcMain.handle('sync-now', async () => { await autoSyncTick(); return { ok: true }; });
 ipcMain.handle('check-update', () => checkGitHubUpdate());
+
+/* ---------------- 关闭确认（渲染端自绘弹窗回执） ---------------- */
+ipcMain.handle('close-decision', (_e, act, remember) => {
+  const cfg = loadCfg();
+  if (remember) { cfg.closeAction = act === 'quit' ? 'quit' : 'minimize'; saveCfg(cfg); }
+  if (act === 'quit') { quitting = true; app.quit(); }
+  else if (win && !win.isDestroyed()) win.hide();
+  return { ok: true };
+});
+
+/* ---------------- 账号登录 / 历史用户名 / 安全保存密码 ---------------- */
+const normalizeServer = s => {
+  let v = String(s || '').trim().replace(/\/+$/, '');
+  if (v && !/^https?:\/\//i.test(v)) v = 'http://' + v;
+  return v;
+};
+function postJson(urlStr, payload, allowInsecure) {
+  return new Promise(resolve => {
+    let u; try { u = new URL(urlStr); } catch { return resolve({ error: '服务器地址无效' }); }
+    if (!/^https?:$/.test(u.protocol)) return resolve({ error: '服务器地址需以 http:// 或 https:// 开头' });
+    const data = JSON.stringify(payload || {});
+    const lib = u.protocol === 'http:' ? http : https;
+    const req = lib.request({
+      protocol: u.protocol, hostname: u.hostname,
+      port: u.port || (u.protocol === 'http:' ? 80 : 443),
+      path: u.pathname + u.search, method: 'POST', timeout: 15000,
+      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data),
+        'user-agent': 'wg-companion/' + (app.getVersion() || '1.0.0') },
+      rejectUnauthorized: !allowInsecure,       // 默认允许自签名证书（内网部署常见）
+    }, res => {
+      let body = ''; res.on('data', d => body += d);
+      res.on('end', () => {
+        let j = null; try { j = JSON.parse(body); } catch {}
+        if (res.statusCode >= 200 && res.statusCode < 300 && j) resolve(j);
+        else resolve({ error: (j && j.error) || ('登录失败（HTTP ' + res.statusCode + '）') });
+      });
+    });
+    req.on('error', e => resolve({ error: '无法连接服务器：' + ((e && e.message) || e) }));
+    req.on('timeout', () => { try { req.destroy(); } catch {} resolve({ error: '连接服务器超时' }); });
+    req.write(data); req.end();
+  });
+}
+/* 登录 wg-web：成功后把下发的配置写入 tunnels 并标记为「账号配置」（置顶显示） */
+async function doLogin(p) {
+  const server = normalizeServer(p && p.server);
+  const username = String((p && p.username) || '').trim();
+  const password = String((p && p.password) || '');
+  if (!server || !username || !password) return { ok: false, error: '请填写服务器地址、用户名与密码' };
+  const cfg = loadCfg();
+  const r = await postJson(server + '/api/client/login', { username, password }, cfg.allowInsecure !== false);
+  if (r.error || !r.ok || typeof r.conf !== 'string')
+    return { ok: false, error: r.error || '登录失败：服务器未返回配置' };
+  ensureDir();
+  const base = core.sanitizeTunnelName(username) || 'account';
+  const map = loadAccounts().tunnels;
+  /* 同一账号再次登录覆盖原文件（保持置顶位置不变）；不同账号重名才追加序号 */
+  const existing = Object.keys(map).find(f => map[f] && map[f].username === username && map[f].server === server);
+  let name = existing ? existing.replace(/\.conf$/i, '') : base, n = 2;
+  if (!existing) while (fs.existsSync(tunnelPath(name + '.conf'))) name = `${base.slice(0, 29)}-${n++}`;
+  const file = name + '.conf';
+  try { fs.writeFileSync(tunnelPath(file), r.conf, 'utf8'); }
+  catch (e) { return { ok: false, error: '写入配置失败：' + e.message }; }
+  markAccountTunnel(file, server, username);
+  if (p.remember !== undefined || p.autoLogin !== undefined)
+    rememberAccount(server, username, !!p.remember, !!p.autoLogin, p.remember ? password : '');
+  return { ok: true, file, name: r.name || username, vpn_ip: r.vpn_ip || '', server, username };
+}
+ipcMain.handle('accounts-list', () => publicAccounts());
+ipcMain.handle('login', async (_e, p) => {
+  const r = await doLogin(p || {});
+  if (r.ok) {
+    if (win && !win.isDestroyed()) win.show();
+    broadcast('account-changed', { action: 'login', username: r.username, file: r.file });
+  }
+  return r;
+});
+ipcMain.handle('logout', async (_e, p) => {
+  const server = normalizeServer(p && p.server), username = String((p && p.username) || '');
+  const a = loadAccounts();
+  const files = Object.keys(a.tunnels).filter(f => a.tunnels[f] &&
+    a.tunnels[f].username === username && (!server || a.tunnels[f].server === server));
+  for (const f of files) {
+    const w = watchers.get(f); if (w) { try { w.close(); } catch {} watchers.delete(f); }
+    try { fs.unlinkSync(tunnelPath(f)); } catch {}
+    delete a.tunnels[f]; delete states[f];
+  }
+  saveAccounts(a);
+  updateTray();
+  broadcast('account-changed', { action: 'logout', username, removed: files.length });
+  return { ok: true, removed: files.length };
+});
+ipcMain.handle('accounts-save', (_e, p) => {
+  const server = normalizeServer(p && p.server), username = String((p && p.username) || '').trim();
+  if (!server || !username) return { ok: false, error: '缺少服务器地址或用户名' };
+  rememberAccount(server, username, !!p.remember, !!p.autoLogin, p.password || '');
+  return { ok: true, ...publicAccounts() };
+});
+ipcMain.handle('accounts-forget', (_e, p) => {
+  const server = normalizeServer(p && p.server), username = String((p && p.username) || '');
+  const key = acctKey(server, username);
+  const a = loadAccounts();
+  a.history = a.history.filter(h => acctKey(h.server, h.username) !== key);
+  saveAccounts(a);
+  return { ok: true, ...publicAccounts() };
+});
+/* 取回某条历史登录已保存的密码（用户在下拉里选择用户名时回填密码框）。
+   仅在勾选过「保存密码」时存在；解密失败返回空串。 */
+ipcMain.handle('accounts-get-password', (_e, p) => {
+  const server = normalizeServer(p && p.server), username = String((p && p.username) || '');
+  const key = acctKey(server, username);
+  const h = loadAccounts().history.find(x => acctKey(x.server, x.username) === key);
+  return { ok: true, password: (h && h.pwdEnc) ? decPwd(h.pwdEnc) : '' };
+});
 
 ipcMain.handle('list-tunnels', () => listTunnels());
 
@@ -251,6 +429,7 @@ ipcMain.handle('import-conf', async (_e, paths) => {
 
 ipcMain.handle('delete-tunnel', (_e, file) => {
   try { fs.unlinkSync(tunnelPath(file)); } catch {}
+  unmarkAccountTunnel(file);          // 手动移除账号配置时同步清掉归属标记
   delete states[file];
   updateTray();
   return { tunnels: listTunnels() };
@@ -393,6 +572,25 @@ function startAutoSync() {
   const sec = Math.max(10, Number(cfg.autoUpdateInterval) || 30);
   syncTimer = setInterval(autoSyncTick, sec * 1000);
   setTimeout(autoSyncTick, 3000);                  // 启动后先错峰跑一次
+}
+
+/* 启动自动登录：对勾选「自动登录」且已安全保存密码的账号依次登录，成功后其配置置顶显示。
+   出站 HTTPS、失败静默（不打扰），不影响应用正常启动。 */
+async function startAutoLogin() {
+  let list = [];
+  try { list = loadAccounts().history.filter(h => h.autoLogin && h.pwdEnc); } catch { return; }
+  for (const h of list) {
+    const pwd = decPwd(h.pwdEnc);
+    if (!pwd) continue;
+    const r = await doLogin({ server: h.server, username: h.username, password: pwd, remember: true, autoLogin: true });
+    if (r.ok) {
+      broadcast('account-changed', { action: 'autologin', username: h.username, file: r.file });
+      try {
+        if (Notification.isSupported())
+          new Notification({ title: '已自动登录', body: h.username + ' · 配置已自动更新', silent: true }).show();
+      } catch {}
+    }
+  }
 }
 
 /* ---------------- GitHub 更新检查 ----------------

@@ -72,6 +72,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
             导入配置
           </button>
+          <button class="btn" id="btnLogin" title="登录 wg-web 账号，自动拉取你的配置并置顶显示">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>
+            <span id="btnLoginTxt">登录</span>
+          </button>
         </div>
       </div>
       <div class="tunnels" id="tunnelList"></div>
@@ -112,6 +116,76 @@
           <button class="btn primary" id="btnSettingsSave">保存</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ===== 登录面板（点击「登录」后以动画展开） ===== -->
+  <div class="login-mask" id="loginMask" hidden>
+    <div class="login-card" id="loginCard">
+      <div class="lg-glow"></div>
+      <div class="lg-hd">
+        <div class="lg-brand">
+          <span class="lg-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+          </span>
+          <div><div class="lg-t">登录 WG Companion</div>
+            <div class="lg-s">用 wg-web 平台账号登录，自动拉取你的配置</div></div>
+        </div>
+        <button class="lg-x" id="btnLoginClose" aria-label="关闭">✕</button>
+      </div>
+      <div class="lg-bd">
+        <div class="lg-field">
+          <span class="lg-label">服务器地址</span>
+          <input id="lgServer" placeholder="https://vpn.example.com" spellcheck="false" autocomplete="off">
+        </div>
+        <div class="lg-field" id="lgUserWrap">
+          <span class="lg-label">用户名</span>
+          <input id="lgUser" placeholder="你的姓名（即 VPN 配置用户名）" spellcheck="false" autocomplete="off">
+          <div class="lg-hist" id="lgHist" hidden></div>
+        </div>
+        <div class="lg-field">
+          <span class="lg-label">密码</span>
+          <span class="lg-pw">
+            <input id="lgPass" type="password" placeholder="登录密码" autocomplete="off">
+            <button class="lg-eye" id="lgEye" type="button" title="显示密码" aria-label="显示密码">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </span>
+        </div>
+        <div class="lg-opts">
+          <label class="lg-chk"><input type="checkbox" id="lgRemember"><span class="lg-box"></span><span>保存密码</span></label>
+          <label class="lg-chk"><input type="checkbox" id="lgAuto"><span class="lg-box"></span><span>自动登录</span></label>
+        </div>
+        <div class="lg-note" id="lgNote"></div>
+        <div class="lg-hint" id="lgHint"></div>
+        <button class="btn primary block lg-submit" id="lgSubmit">
+          <span class="lg-spin"></span><span class="lg-submit-t">登 录</span>
+        </button>
+        <div class="lg-foot" id="lgFoot"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 关闭确认（华丽弹窗：两个按钮均带悬浮/按压/光泽动画） ===== -->
+  <div class="exit-mask" id="exitMask" hidden>
+    <div class="exit-card" id="exitCard">
+      <div class="exit-halo"></div>
+      <div class="exit-ico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg>
+      </div>
+      <div class="exit-t">要关闭窗口吗？</div>
+      <div class="exit-s">隧道以系统服务方式运行，<b>最小化到托盘</b>后连接不受影响，托盘图标可随时唤回。</div>
+      <div class="exit-acts">
+        <button class="exit-btn min" id="exMin">
+          <span class="eb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></span>
+          <span class="eb-t">最小化到托盘</span><span class="eb-shine"></span>
+        </button>
+        <button class="exit-btn quit" id="exQuit">
+          <span class="eb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg></span>
+          <span class="eb-t">退出程序</span><span class="eb-shine"></span>
+        </button>
+      </div>
+      <label class="lg-chk exit-remember"><input type="checkbox" id="exRemember"><span class="lg-box"></span><span>记住我的选择</span></label>
     </div>
   </div>
 

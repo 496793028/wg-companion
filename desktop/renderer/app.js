@@ -48,7 +48,7 @@ function renderList() {
     <div class="tcard ${selected === t.file ? 'sel' : ''} ${states[t.file] === 'up' ? 'up' : ''}"
          data-file="${esc(t.file)}" style="animation-delay:${i * 60}ms" title="双击开关隧道 · 长按拖动排序">
       <div class="tc-main">
-        <div class="tc-name">${esc(t.name)} ${modeBadge(t.mode)}${t.server && t.token ? '<span class="sync-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 .5-9 6 6 0 0 0-11.6-1.5A4 4 0 0 0 6 19h11.5z"/></svg>服务端同步</span>' : ''}</div>
+        <div class="tc-name">${esc(t.name)} ${modeBadge(t.mode)}${t.account ? `<span class="acct-badge" title="由登录账号自动拉取"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>账号配置</span>` : ''}${t.server && t.token ? '<span class="sync-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 .5-9 6 6 0 0 0-11.6-1.5A4 4 0 0 0 6 19h11.5z"/></svg>服务端同步</span>' : ''}</div>
         <div class="tc-nets">${netChips(t.nets)}</div>
         <div class="tc-ep mono">${esc(t.peer.endpoint || '未设置 Endpoint')}${t.iface.address[0] ? ' · ' + esc(t.iface.address[0]) : ''}</div>
       </div>
@@ -89,7 +89,7 @@ function renderHero() {
     : st === 'up' ? '点击断开隧道' : '点击开启隧道';
 }
 
-function renderAll() { renderList(); renderHero(); }
+function renderAll() { renderList(); renderHero(); refreshLoginBtn(); }
 
 /* ---------------- 数据加载 ---------------- */
 async function refresh() {
@@ -326,7 +326,195 @@ $('#btnUpdateGo') && $('#btnUpdateGo').addEventListener('click', () => {
 });
 $('#btnUpdateClose') && $('#btnUpdateClose').addEventListener('click', () => { const b = $('#updateBanner'); if (b) b.hidden = true; });
 
-/* ---------------- 启动 ---------------- */
+/* ================= 账号登录 =================
+ * 登录 wg-web 账号 → 自动拉取该账号的配置并**置顶显示**（落盘与置顶排序在主进程）；
+ * 退出登录 → 删除这些配置。
+ * 历史用户名下拉：点击用户名框展开，输入时按内容筛选，无匹配自动收起；
+ * 选中时若该用户名曾保存密码则一并回填；条目右侧删除按钮会连同保存的密码一起删除。
+ * 「保存密码」用系统级安全存储（Electron safeStorage）加密，绝不落明文。
+ * 关闭确认弹窗也在此：主进程拦截窗口关闭后通过 onAskClose 请求渲染端展示华丽弹窗。 */
+let acctState = { history: [], secure: true };
+const $lg = id => document.getElementById(id);
+
+async function reloadAccounts() {
+  try { acctState = await window.wgc.accountsList(); }
+  catch { acctState = { history: [], secure: true }; }
+  return acctState;
+}
+/* 登录按钮文案：已登录则显示账号名并高亮 */
+function refreshLoginBtn() {
+  const t = $lg('btnLoginTxt'), btn = $lg('btnLogin');
+  if (!t || !btn) return;
+  const acct = tunnels.find(x => x.account);
+  if (acct) { t.textContent = acct.accountUser || '账号'; btn.classList.add('on'); btn.title = `已登录：${acct.accountUser || ''}（点击管理 / 退出）`; }
+  else { t.textContent = '登录'; btn.classList.remove('on'); btn.title = '登录 wg-web 账号，自动拉取你的配置并置顶显示'; }
+}
+function setHint(msg, type) {
+  const h = $lg('lgHint'); if (!h) return;
+  h.textContent = msg || '';
+  h.className = 'lg-hint' + (msg ? ' show ' + (type || 'err') : '');
+}
+function openLogin() {
+  const m = $lg('loginMask'); if (!m) return;
+  m.hidden = false;
+  document.body.classList.add('login-open');
+  reloadAccounts().then(() => {
+    const s = $lg('lgServer'), u = $lg('lgUser'), first = acctState.history[0] || {};
+    if (!s.value) s.value = cfg.server || (tunnels.find(t => t.server) || {}).server || '';
+    if (!u.value) u.value = first.username || '';
+    $lg('lgPass').value = '';
+    $lg('lgRemember').checked = !!first.remember;
+    $lg('lgAuto').checked = !!first.autoLogin;
+    const rk = $lg('lgRemember'), ak = $lg('lgAuto');
+    rk.disabled = ak.disabled = !acctState.secure;
+    if (!acctState.secure) { rk.checked = ak.checked = false; }
+    $lg('lgNote').innerHTML = acctState.secure ? ''
+      : '<b>注意</b>：当前系统未提供安全存储，无法保存密码（自动登录不可用）。';
+    setHint('');
+    setTimeout(() => u.focus(), 70);
+    renderAcctFooter();
+  });
+}
+function closeLogin() {
+  const m = $lg('loginMask'); if (!m || m.hidden) return;
+  m.classList.add('closing');
+  setTimeout(() => {
+    m.hidden = true; m.classList.remove('closing');
+    document.body.classList.remove('login-open'); hideHist();
+  }, 180);
+}
+/* 面板底部：已登录时给出「退出登录」（退出会删除该账号拉取的配置） */
+function renderAcctFooter() {
+  const f = $lg('lgFoot'); if (!f) return;
+  const acct = tunnels.find(x => x.account);
+  if (!acct) { f.innerHTML = ''; return; }
+  f.innerHTML = `<span>当前已登录：<b>${esc(acct.accountUser || '')}</b>
+      <i class="mono">${esc(String(acct.accountServer || '').replace(/^https?:\/\//, ''))}</i></span>
+    <button class="lg-out" id="lgLogout">退出登录</button>`;
+  $lg('lgLogout').onclick = async () => {
+    const confs = tunnels.filter(x => x.account);
+    if (!confs.length) return;
+    if (!confirm('退出登录会同时删除该账号自动拉取的配置，确定继续？')) return;
+    const r = await window.wgc.logout({ server: confs[0].accountServer, username: confs[0].accountUser });
+    await refresh(); toast(`已退出登录，删除 ${(r && r.removed) || 0} 个配置`);
+    await reloadAccounts(); renderAcctFooter(); refreshLoginBtn();
+  };
+}
+/* ---- 历史用户名下拉 ---- */
+function hideHist() { const h = $lg('lgHist'); if (h) { h.hidden = true; h.innerHTML = ''; } }
+function showHist(filter) {
+  const h = $lg('lgHist'); if (!h) return;
+  const q = String(filter || '').trim().toLowerCase();
+  const list = acctState.history.filter(x => !q || String(x.username).toLowerCase().includes(q));
+  if (!list.length) { hideHist(); return; }        /* 无匹配 -> 下拉消失 */
+  h.innerHTML = list.map(x => `
+    <div class="lg-hist-item" data-user="${esc(x.username)}" data-server="${esc(x.server)}">
+      <span class="lh-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></span>
+      <span class="lh-main"><span class="lh-u">${esc(x.username)}</span>
+        <span class="lh-s">${esc(String(x.server).replace(/^https?:\/\//, ''))}${x.hasPwd ? ' · 已保存密码' : ''}</span></span>
+      <button class="lh-del" data-del="1" title="删除该条目（连同已保存的密码）">✕</button>
+    </div>`).join('');
+  h.hidden = false;
+  $$('.lg-hist-item', h).forEach(it => {
+    const user = it.dataset.user, server = it.dataset.server;
+    it.addEventListener('mousedown', async e => {
+      if (e.target.closest('[data-del]')) return;
+      $lg('lgUser').value = user; $lg('lgServer').value = server;
+      const r = await window.wgc.accountsGetPassword({ server, username: user });
+      if (r && r.password) $lg('lgPass').value = r.password;      /* 曾保存密码 -> 一并填入 */
+      const rec = acctState.history.find(x => x.username === user && x.server === server) || {};
+      $lg('lgRemember').checked = !!rec.remember;
+      $lg('lgAuto').checked = !!rec.autoLogin;
+      hideHist(); setHint('');
+    });
+    const del = it.querySelector('[data-del]');
+    if (del) del.addEventListener('mousedown', async e => {
+      e.preventDefault(); e.stopPropagation();
+      await window.wgc.accountsForget({ server, username: user });
+      await reloadAccounts(); renderAcctFooter();
+      showHist($lg('lgUser').value);
+      toast('已删除该条目及其保存的密码');
+    });
+  });
+}
+async function submitLogin() {
+  const server = $lg('lgServer').value.trim();
+  const username = $lg('lgUser').value.trim();
+  const password = $lg('lgPass').value;
+  const remember = $lg('lgRemember').checked && !$lg('lgRemember').disabled;
+  const autoLogin = $lg('lgAuto').checked && !$lg('lgAuto').disabled;
+  if (!server) return setHint('请填写服务器地址');
+  if (!username) return setHint('请填写用户名');
+  if (!password) return setHint('请填写密码');
+  hideHist();
+  const btn = $lg('lgSubmit');
+  btn.classList.add('busy'); setHint('正在登录…', 'ok');
+  try {
+    const r = await window.wgc.login({ server, username, password, remember, autoLogin });
+    if (!r || !r.ok) { setHint((r && r.error) || '登录失败'); return; }
+    cfg.server = server; await window.wgc.saveCfg(cfg);
+    await reloadAccounts();
+    await refresh();                                  /* 账号配置已在主进程置顶 */
+    if (r.file) { window.wgc.watch(r.file); watchSet.add(r.file); }
+    toast(`已登录 ${r.name || username}，配置已置顶显示`);
+    renderAcctFooter(); refreshLoginBtn();
+    closeLogin();
+  } finally { btn.classList.remove('busy'); }
+}
+
+/* ---- 关闭确认弹窗（两个按钮均带动画） ---- */
+function showExitDialog() {
+  const m = $lg('exitMask'); if (!m) return;
+  m.hidden = false;
+  $lg('exRemember').checked = false;
+  setTimeout(() => $lg('exMin').focus(), 80);
+}
+function exitDecision(act) {
+  const m = $lg('exitMask'); if (!m) return;
+  const remember = $lg('exRemember').checked;
+  m.classList.add('closing');
+  setTimeout(() => { m.hidden = true; m.classList.remove('closing'); }, 170);
+  window.wgc.closeDecision(act, remember);
+}
+
+/* ---- 账号区事件绑定 ---- */
+$lg('btnLogin').addEventListener('click', openLogin);
+$lg('btnLoginClose').addEventListener('click', closeLogin);
+$lg('loginMask').addEventListener('click', e => { if (e.target === $lg('loginMask')) closeLogin(); });
+$lg('lgSubmit').addEventListener('click', submitLogin);
+$lg('lgPass').addEventListener('keydown', e => { if (e.key === 'Enter') submitLogin(); });
+$lg('lgUser').addEventListener('keydown', e => { if (e.key === 'Enter') $lg('lgPass').focus(); });
+$lg('lgEye').addEventListener('click', () => {
+  const p = $lg('lgPass'), show = p.type === 'password';
+  p.type = show ? 'text' : 'password';
+  $lg('lgEye').classList.toggle('on', show);
+  $lg('lgEye').title = show ? '隐藏密码' : '显示密码';
+});
+$lg('lgUser').addEventListener('focus', () => showHist($lg('lgUser').value));
+$lg('lgUser').addEventListener('input', () => showHist($lg('lgUser').value));
+$lg('lgUser').addEventListener('blur', () => setTimeout(hideHist, 170));
+/* 勾选「自动登录」时自动勾上「保存密码」（自动登录必须依赖已保存的密码） */
+$lg('lgAuto').addEventListener('change', () => {
+  if ($lg('lgAuto').checked && !$lg('lgRemember').disabled) $lg('lgRemember').checked = true;
+});
+$lg('exMin').addEventListener('click', () => exitDecision('minimize'));
+$lg('exQuit').addEventListener('click', () => exitDecision('quit'));
+$lg('exitMask').addEventListener('click', e => { if (e.target === $lg('exitMask')) $lg('exitMask').hidden = true; });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  hideHist();
+  if (!$lg('loginMask').hidden) closeLogin();
+  else if (!$lg('exitMask').hidden) $lg('exitMask').hidden = true;
+});
+window.wgc.onAskClose(() => showExitDialog());
+window.wgc.onAccountChanged(async d => {
+  await refresh();
+  refreshLoginBtn(); renderAcctFooter();
+  if (d && d.action === 'autologin') toast(`已自动登录 ${d.username}`);
+  else if (d && d.action === 'logout') toast(`已退出登录 ${d.username}`);
+});
+
+/* ================= 启动 ================= */
 (async () => {
   env = await window.wgc.env();
   cfg = await window.wgc.getCfg();
