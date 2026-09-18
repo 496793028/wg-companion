@@ -16,8 +16,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,8 +28,11 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.wireguard.android.backend.GoBackend
 import com.wireguard.android.backend.Tunnel
 import com.wireguard.config.Config
@@ -41,26 +46,23 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.math.max
 
-/* 主界面：导入配置 → 显示 用户名 / 模式徽章（白名单·黑名单·全代理）/ 授权网段 → 一键开合隧道。
- * 隧道由 WireGuard GoBackend（系统 VpnService）承载，无需安装任何 WireGuard 应用。 */
+/* 主界面：导入配置 / 账号登录 → 显示 用户名 · 模式徽章（白名单·黑名单·全代理）· 授权网段 → 一键开合隧道。
+ * 隧道由 WireGuard GoBackend（系统 VpnService）承载，无需安装任何 WireGuard 应用。
+ *
+ * 账号登录（与桌面端能力对齐）：
+ *   · 「导入配置」右侧「登录」→ 用平台 VPN 账号（用户名 = VPN 配置姓名 + 密码）登录
+ *   · 登录后自动拉取该账号的 .conf 并**置顶显示**（卡片带「账号配置」标识），退出登录即删除
+ *   · 保存密码（Android Keystore AES-GCM 加密，不落明文）· 自动登录（启动静默登录）
+ *   · 历史用户名下拉：输入即筛选、无匹配自动消失、选中回填已保存密码、条目删除连同密码删除 */
 class MainActivity : ComponentActivity() {
 
     private val pickConf =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? -> uri?.let { importConf(it) } }
 
-    private val vpnPermission =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            val t = pendingToggle
-            pendingToggle = null
-            if (result.resultCode == RESULT_OK && t != null) toggle(t.first, t.second)
-            else if (t != null && t.first) toast("未授予 VPN 权限，无法开启隧道")
-        }
-
     private var pendingToggle: Pair<Boolean, File>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        /* 从文件管理器「用其他应用打开」.conf 直接进入导入 */
         intent?.data?.let { importConf(it) }
         setContent { WgcScreen() }
     }
@@ -68,13 +70,24 @@ class MainActivity : ComponentActivity() {
     /* ---------- 数据 ---------- */
     private fun tunnelDir(): File = getExternalFilesDir(null) ?: filesDir
 
+    /** 接口名（GoBackend 用隧道名做网卡名）必须合法：仅 [A-Za-z0-9_=+.-]，且不超过 15 字符 */
+    private fun sanitizeTunnelName(raw: String): String {
+        val s = raw.replace(Regex("[^a-zA-Z0-9_=+.-]+"), "_").trim('_').take(15)
+        if (s.isNotEmpty()) return s
+        /* 中文姓名等无法转成合法接口名：用稳定短哈希 —— 同一账号重复登录命中同一文件（保持置顶位置） */
+        val h = raw.fold(0) { acc, ch -> (acc * 31 + ch.code) and 0x7fffffff }
+        return "acct" + h.toString(36).take(9)
+    }
+
     private fun loadTunnels(): List<TunnelItem> =
         (tunnelDir().listFiles { f -> f.name.endsWith(".conf") } ?: emptyArray())
-            .sortedBy { it.name }
             .map { f ->
                 val text = try { f.readText() } catch (_: Exception) { "" }
-                TunnelItem(f, ConfMeta.parseInfo(text, f.name))
+                val owner = AccountStore.tunnelOwner(this, f.name)
+                TunnelItem(f, ConfMeta.parseInfo(text, f.name), owner?.second)
             }
+            /* 登录账号自动拉取的配置恒定置顶；其余按文件名 */
+            .sortedWith(compareByDescending<TunnelItem> { it.accountUser != null }.thenBy { it.file.name })
 
     private fun importConf(uri: Uri) {
         try {
@@ -83,7 +96,8 @@ class MainActivity : ComponentActivity() {
             val name = ConfMeta.parseInfo(raw, uri.lastPathSegment ?: "tunnel").name
             tunnelDir().mkdirs()
             /* 原样保存（含 wg-meta 注释行），GoBackend 解析时会忽略注释 */
-            File(tunnelDir(), "$name.conf").writeText(raw)
+            File(tunnelDir(), "${sanitizeTunnelName(name)}.conf").writeText(raw)
+            AccountStore.unmarkTunnel(this, "${sanitizeTunnelName(name)}.conf")
             toast("已导入：$name")
         } catch (e: Exception) {
             toast("导入失败：${e.message}")
@@ -92,7 +106,43 @@ class MainActivity : ComponentActivity() {
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
 
-    /* 版本号 + GitHub 更新检查（与桌面端 1.1.0 行为一致） */
+    /* ---------- 账号登录 ---------- */
+
+    /** 登录并落盘：成功返回 (true, 显示名)，失败返回 (false, 错误) */
+    private suspend fun performLogin(
+        serverRaw: String, username: String, password: String, remember: Boolean, autoLogin: Boolean,
+    ): Pair<Boolean, String> {
+        val r = withContext(Dispatchers.IO) { LoginApi.login(serverRaw, username, password) }
+        if (!r.ok) return false to r.error
+        val srv = LoginApi.normalizeServer(serverRaw)
+        val dir = tunnelDir(); dir.mkdirs()
+        /* 同一账号再次登录覆盖原文件（保持置顶位置不变）；不同账号重名才追加序号 */
+        val existing = AccountStore.filesOf(this, srv, username).firstOrNull()
+        val base = sanitizeTunnelName(existing?.removeSuffix(".conf") ?: username)
+        var name = base; var n = 2
+        if (existing == null) while (File(dir, "$name.conf").exists()) name = "${base.take(12)}-${n++}"
+        withContext(Dispatchers.IO) {
+            File(dir, "$name.conf").writeText(r.conf)
+            AccountStore.markTunnel(this@MainActivity, "$name.conf", srv, username)
+            AccountStore.remember(this@MainActivity, srv, username, remember, autoLogin,
+                if (remember) password else null)
+        }
+        return true to r.name.ifEmpty { username }
+    }
+
+    /** 退出登录：关闭并删除该账号自动拉取的配置（历史条目与保存的密码保留） */
+    private fun performLogout(server: String, username: String): Int {
+        val files = AccountStore.filesOf(this, server, username)
+        files.forEach { f ->
+            val file = File(tunnelDir(), f)
+            try { WgcApp.backend.setState(SimpleTunnel(file.nameWithoutExtension), Tunnel.State.DOWN, null) } catch (_: Exception) {}
+            file.delete()
+        }
+        AccountStore.clearTunnelMarks(this, files)
+        return files.size
+    }
+
+    /* ---------- 版本号 + GitHub 更新检查 ---------- */
     private data class UpdateInfo(val latest: String, val url: String)
 
     private fun openUrl(url: String) {
@@ -155,13 +205,24 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun WgcScreen() {
         val appVersion = remember {
-            runCatching { packageManager.getPackageInfo(packageName, 0).versionName ?: "1.1.0" }.getOrElse { "1.1.0" }
+            runCatching { packageManager.getPackageInfo(packageName, 0).versionName ?: "1.2.0" }.getOrElse { "1.2.0" }
         }
         var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
         LaunchedEffect(Unit) { updateInfo = checkGitHubUpdate(appVersion) }
 
         var tunnels by remember { mutableStateOf(loadTunnels()) }
+        var showLogin by remember { mutableStateOf(false) }
         val scope = rememberCoroutineScope()
+
+        /* 启动自动登录：勾选了「自动登录」且已安全保存密码的账号（只取最近一条），静默登录 */
+        LaunchedEffect(Unit) {
+            val h = AccountStore.history(this@MainActivity).firstOrNull { it.autoLogin && it.hasPwd } ?: return@LaunchedEffect
+            val pwd = withContext(Dispatchers.IO) { AccountStore.password(this@MainActivity, h.server, h.username) }
+            if (pwd.isEmpty()) return@LaunchedEffect
+            val (ok, msg) = performLogin(h.server, h.username, pwd, true, true)
+            if (ok) { tunnels = loadTunnels(); toast("已自动登录 $msg，配置已置顶") }
+        }
+
         val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             uri?.let { importConf(it); tunnels = loadTunnels() }
         }
@@ -199,12 +260,27 @@ class MainActivity : ComponentActivity() {
                 }
 
                 Spacer(Modifier.height(18.dp))
-                Button(
-                    onClick = { pick.launch(arrayOf("text/plain", "application/octet-stream")) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C5CFF)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.height(46.dp).fillMaxWidth()
-                ) { Text("导入配置（.conf）", fontSize = 14.sp) }
+                /* 导入配置 | 登录（登录按钮紧贴导入按钮右侧） */
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = { pick.launch(arrayOf("text/plain", "application/octet-stream")) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C5CFF)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f).height(46.dp)
+                    ) { Text("导入配置（.conf）", fontSize = 14.sp) }
+                    OutlinedButton(
+                        onClick = { showLogin = true },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = if (tunnels.any { it.accountUser != null }) Color(0xFF2FD07B) else Color(0xFFE8EDF5)),
+                        modifier = Modifier.height(46.dp)
+                    ) {
+                        Text(
+                            tunnels.firstOrNull { it.accountUser != null }?.accountUser ?: "登录",
+                            fontSize = 14.sp, maxLines = 1
+                        )
+                    }
+                }
 
                 Spacer(Modifier.height(18.dp))
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -219,9 +295,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        if (showLogin) {
+            LoginDialog(
+                onClose = { showLogin = false },
+                onChanged = { tunnels = loadTunnels() },
+            )
+        }
     }
 
-    data class TunnelItem(val file: File, val info: TunnelInfo)
+    data class TunnelItem(val file: File, val info: TunnelInfo, val accountUser: String? = null)
 
     @Composable
     private fun TunnelCard(t: TunnelItem, onToggle: (Boolean) -> Unit) {
@@ -229,7 +312,6 @@ class MainActivity : ComponentActivity() {
         val scale by animateFloatAsState(if (up.value) 1.012f else 0.995f, tween(280), label = "sc")
         val knobColor by animateColorAsState(if (up.value) Color(0xFF2FD07B) else Color(0xFF8FA0B8), tween(260), label = "knob")
         LaunchedEffect(t.file) {
-            /* 每次重组读一次后端状态（简单可靠） */
             up.value = try {
                 WgcApp.backend.getState(SimpleTunnel(t.info.name)) == Tunnel.State.UP
             } catch (_: Exception) { false }
@@ -257,6 +339,13 @@ class MainActivity : ComponentActivity() {
                     Text(t.info.modeLabel, color = badgeColor, fontSize = 11.sp,
                         modifier = Modifier.background(badgeColor.copy(alpha = 0.15f), RoundedCornerShape(999.dp))
                             .padding(horizontal = 9.dp, vertical = 3.dp))
+                    /* 登录账号自动拉取的配置：绿色「账号配置」标识 */
+                    if (t.accountUser != null) {
+                        Spacer(Modifier.width(6.dp))
+                        Text("账号配置", color = Color(0xFF2FD07B), fontSize = 10.sp,
+                            modifier = Modifier.background(Color(0x1F2FD07B), RoundedCornerShape(999.dp))
+                                .padding(horizontal = 8.dp, vertical = 3.dp))
+                    }
                 }
                 Spacer(Modifier.height(7.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -278,6 +367,195 @@ class MainActivity : ComponentActivity() {
                 contentAlignment = Alignment.CenterStart
             ) {
                 Box(Modifier.padding(start = if (up.value) 26.dp else 3.dp).size(22.dp).background(knobColor, CircleShape))
+            }
+        }
+    }
+
+    /* ---------- 登录面板（Dialog，华丽卡片 + 历史用户名下拉） ---------- */
+    @Composable
+    private fun LoginDialog(onClose: () -> Unit, onChanged: () -> Unit) {
+        val ctx = this@MainActivity
+        val scope = rememberCoroutineScope()
+
+        var server by remember { mutableStateOf("") }
+        var user by remember { mutableStateOf("") }
+        var pwd by remember { mutableStateOf("") }
+        var remember by remember { mutableStateOf(false) }
+        var autoLogin by remember { mutableStateOf(false) }
+        var showPwd by remember { mutableStateOf(false) }
+        var showHist by remember { mutableStateOf(true) }
+        var busy by remember { mutableStateOf(false) }
+        var hint by remember { mutableStateOf("") }
+        var hist by remember { mutableStateOf(AccountStore.history(ctx)) }
+        val secure = remember { AccountStore.secureAvailable() }
+
+        /* 已有登录账号（取置顶的账号配置） */
+        var owner by remember { mutableStateOf(
+            (tunnelDir().listFiles { f -> f.name.endsWith(".conf") } ?: emptyArray())
+                .mapNotNull { AccountStore.tunnelOwner(ctx, it.name)?.let { o -> it.name to o } }
+                .firstOrNull()
+        ) }
+
+        LaunchedEffect(Unit) {
+            val h = hist.firstOrNull()
+            if (h != null) { server = h.server; user = h.username; remember = h.remember; autoLogin = h.autoLogin }
+            if (!secure) { remember = false; autoLogin = false }
+        }
+
+        val filtered = hist.filter { user.isBlank() || it.username.contains(user, ignoreCase = true) }
+
+        Dialog(onDismissRequest = { onClose() }) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Color(0xFF121926),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2A3648)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState())) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("登录 WG Companion", color = Color(0xFFE8EDF5), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            Text("用 wg-web 平台账号登录，自动拉取你的配置", color = Color(0xFF5C6A7F), fontSize = 11.5.sp)
+                        }
+                        TextButton(onClick = { onClose() }) { Text("✕", color = Color(0xFF93A0B4)) }
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+                    OutlinedTextField(
+                        value = server, onValueChange = { server = it },
+                        label = { Text("服务器地址") },
+                        placeholder = { Text("https://vpn.example.com") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = user,
+                        onValueChange = { user = it; showHist = true },
+                        label = { Text("用户名（= VPN 配置姓名）") },
+                        singleLine = true,
+                        trailingIcon = {
+                            if (hist.isNotEmpty()) TextButton(onClick = { showHist = !showHist }) {
+                                Text(if (showHist) "收起" else "历史", fontSize = 11.5.sp, color = Color(0xFF93A0B4))
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    /* 历史用户名下拉：输入即筛选，无匹配自动消失 */
+                    if (showHist && filtered.isNotEmpty()) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF161E2D)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                        ) {
+                            Column {
+                                filtered.take(6).forEach { h ->
+                                    Row(
+                                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(Modifier.weight(1f).clickable {
+                                            server = h.server; user = h.username
+                                            remember = h.remember; autoLogin = h.autoLogin
+                                            if (h.hasPwd) {
+                                                val saved = AccountStore.password(ctx, h.server, h.username)
+                                                if (saved.isNotEmpty()) pwd = saved   /* 曾保存密码 -> 一并回填 */
+                                            }
+                                            showHist = false; hint = ""
+                                        }) {
+                                            Text(h.username, color = Color(0xFFE8EDF5), fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                                            Text(
+                                                h.server.removePrefix("https://").removePrefix("http://") + if (h.hasPwd) " · 已保存密码" else "",
+                                                color = Color(0xFF5C6A7F), fontSize = 10.5.sp
+                                            )
+                                        }
+                                        TextButton(onClick = {
+                                            AccountStore.forget(ctx, h.server, h.username)   /* 连同保存的密码一起删除 */
+                                            hist = AccountStore.history(ctx)
+                                            toast("已删除该条目及其保存的密码")
+                                        }) { Text("删除", color = Color(0xFFE5484D), fontSize = 11.5.sp) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = pwd, onValueChange = { pwd = it },
+                        label = { Text("密码") },
+                        singleLine = true,
+                        visualTransformation = if (showPwd) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            TextButton(onClick = { showPwd = !showPwd }) {
+                                Text(if (showPwd) "隐藏" else "显示", fontSize = 11.5.sp, color = Color(0xFF93A0B4))
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = remember && secure, enabled = secure,
+                            onCheckedChange = { remember = it }, colors = CheckboxDefaults.colors(checkedColor = Color(0xFF4C8DFF)))
+                        Text("保存密码", color = Color(0xFF93A0B4), fontSize = 12.5.sp)
+                        Spacer(Modifier.width(12.dp))
+                        Checkbox(checked = autoLogin && secure, enabled = secure,
+                            onCheckedChange = { autoLogin = it; if (it) remember = true },
+                            colors = CheckboxDefaults.colors(checkedColor = Color(0xFF4C8DFF)))
+                        Text("自动登录", color = Color(0xFF93A0B4), fontSize = 12.5.sp)
+                    }
+                    if (!secure) {
+                        Text("当前系统未提供安全存储，无法保存密码（自动登录不可用）。",
+                            color = Color(0xFFD4AF37), fontSize = 11.sp)
+                    }
+                    Text("保存密码后可用「自动登录」在启动时自动登录；密码经系统密钥库加密，不以明文存储。",
+                        color = Color(0xFF5C6A7F), fontSize = 10.5.sp)
+                    if (hint.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(hint, color = Color(0xFFE5484D), fontSize = 11.5.sp)
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+                    Button(
+                        onClick = {
+                            if (server.isBlank()) { hint = "请填写服务器地址"; return@Button }
+                            if (user.isBlank()) { hint = "请填写用户名"; return@Button }
+                            if (pwd.isEmpty()) { hint = "请填写密码"; return@Button }
+                            showHist = false; hint = ""; busy = true
+                            scope.launch {
+                                val (ok, msg) = performLogin(server, user, pwd, remember && secure, autoLogin && secure)
+                                busy = false
+                                if (ok) {
+                                    hist = AccountStore.history(ctx)      /* 刷新历史与条目状态 */
+                                    owner = (tunnelDir().listFiles { f -> f.name.endsWith(".conf") } ?: emptyArray())
+                                        .mapNotNull { AccountStore.tunnelOwner(ctx, it.name)?.let { o -> it.name to o } }
+                                        .firstOrNull()
+                                    onChanged(); toast("已登录 $msg，配置已置顶")
+                                } else hint = msg
+                            }
+                        },
+                        enabled = !busy,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C5CFF)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().height(46.dp)
+                    ) {
+                        if (busy) CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                        else Text("登 录", fontSize = 14.sp)
+                    }
+
+                    owner?.let { (file, o) ->
+                        val (srv, uname) = o
+                        Spacer(Modifier.height(12.dp))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("已登录：$uname", color = Color(0xFF93A0B4), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            TextButton(onClick = {
+                                val n = performLogout(srv, uname)
+                                owner = null; onChanged(); toast("已退出登录，删除 $n 个配置")
+                            }) { Text("退出登录", color = Color(0xFFE5484D), fontSize = 12.sp) }
+                        }
+                    }
+                }
             }
         }
     }
