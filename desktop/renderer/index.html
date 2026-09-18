@@ -86,6 +86,17 @@
   <div class="drop-mask" id="dropMask"><div class="drop-inner">松开导入配置文件</div></div>
   <div class="toast-wrap" id="toastWrap"></div>
 
+  <!-- 版本号角标（右下角） -->
+  <div class="version-tag" id="versionTag"></div>
+
+  <!-- 更新提示横幅 -->
+  <div class="update-banner" id="updateBanner" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+    <span class="ub-text" id="updateText">发现新版本</span>
+    <button class="btn primary sm" id="btnUpdateGo">前往下载</button>
+    <button class="ub-x" id="btnUpdateClose" aria-label="关闭">✕</button>
+  </div>
+
   <!-- 设置弹窗 -->
   <div class="modal-mask" id="settingsModal" hidden>
     <div class="modal">

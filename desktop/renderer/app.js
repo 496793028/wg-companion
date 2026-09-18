@@ -307,10 +307,30 @@ $('#btnSyncNow').addEventListener('click', async () => {
   toast('已检查（如有更新已自动生效）');
 });
 
+/* ---------------- GitHub 更新检查（启动 + 每小时复查）---------------- */
+function showUpdateBanner(r) {
+  const b = $('#updateBanner'); if (!b) return;
+  $('#updateText').textContent = `发现新版本 ${r.latest}（当前 v${r.current}），建议更新`;
+  b.dataset.url = r.url || '';
+  b.hidden = false;
+}
+async function checkForUpdate() {
+  try {
+    const r = await window.wgc.checkUpdate();
+    if (r && r.hasUpdate) showUpdateBanner(r);
+  } catch {}
+}
+$('#btnUpdateGo') && $('#btnUpdateGo').addEventListener('click', () => {
+  const b = $('#updateBanner'); const url = b && b.dataset.url;
+  if (url) window.wgc.openExternal(url);
+});
+$('#btnUpdateClose') && $('#btnUpdateClose').addEventListener('click', () => { const b = $('#updateBanner'); if (b) b.hidden = true; });
+
 /* ---------------- 启动 ---------------- */
 (async () => {
   env = await window.wgc.env();
   cfg = await window.wgc.getCfg();
+  $('#versionTag').textContent = 'v' + env.version;
   $('#platTip').innerHTML = env.platform === 'win32'
     ? `Windows：需安装官方 WireGuard MSI（服务化接口），本应用以 <b>WireGuardTunnel$</b> 系统服务方式开合隧道，随系统自启。安装包要求以管理员身份运行。`
     : env.platform === 'darwin'
@@ -319,4 +339,7 @@ $('#btnSyncNow').addEventListener('click', async () => {
   await refresh();
   /* 入场后再做一次状态轮询（覆盖应用外开/关隧道的情形） */
   setInterval(refresh, 15000);
+  /* 检查 GitHub 是否有新版本（每整小时复查一次） */
+  checkForUpdate();
+  setInterval(checkForUpdate, 60 * 60 * 1000);
 })();

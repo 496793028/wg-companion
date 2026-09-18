@@ -37,6 +37,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlin.math.max
 
 /* 主界面：导入配置 → 显示 用户名 / 模式徽章（白名单·黑名单·全代理）/ 授权网段 → 一键开合隧道。
  * 隧道由 WireGuard GoBackend（系统 VpnService）承载，无需安装任何 WireGuard 应用。 */
@@ -89,6 +92,43 @@ class MainActivity : ComponentActivity() {
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
 
+    /* 版本号 + GitHub 更新检查（与桌面端 1.1.0 行为一致） */
+    private data class UpdateInfo(val latest: String, val url: String)
+
+    private fun openUrl(url: String) {
+        try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
+    }
+
+    private fun semverGt(a: String, b: String): Boolean {
+        val pa = a.split('.').map { it.toIntOrNull() ?: 0 }
+        val pb = b.split('.').map { it.toIntOrNull() ?: 0 }
+        for (i in 0 until max(pa.size, pb.size)) {
+            val x = pa.getOrElse(i) { 0 }; val y = pb.getOrElse(i) { 0 }
+            if (x > y) return true
+            if (x < y) return false
+        }
+        return false
+    }
+
+    private suspend fun checkGitHubUpdate(current: String): UpdateInfo? = withContext(Dispatchers.IO) {
+        try {
+            val u = URL("https://api.github.com/repos/496793028/wg-companion/releases/latest")
+            val conn = (u.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 12000; readTimeout = 12000
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", "wg-companion-android/$current")
+                setRequestProperty("Accept", "application/vnd.github+json")
+            }
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+            val tag = Regex("\"tag_name\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+            val html = Regex("\"html_url\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+            if (tag != null && semverGt(tag.removePrefix("v"), current))
+                UpdateInfo(tag, html ?: "https://github.com/496793028/wg-companion/releases/latest")
+            else null
+        } catch (_: Exception) { null }
+    }
+
     /* ---------- 隧道控制 ---------- */
     private fun toggle(wantUp: Boolean, confFile: File) {
         lifecycleScope.launch {
@@ -114,6 +154,12 @@ class MainActivity : ComponentActivity() {
     /* ---------- UI ---------- */
     @Composable
     private fun WgcScreen() {
+        val appVersion = remember {
+            runCatching { packageManager.getPackageInfo(packageName, 0).versionName ?: "1.1.0" }.getOrElse { "1.1.0" }
+        }
+        var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+        LaunchedEffect(Unit) { updateInfo = checkGitHubUpdate(appVersion) }
+
         var tunnels by remember { mutableStateOf(loadTunnels()) }
         val scope = rememberCoroutineScope()
         val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -131,8 +177,26 @@ class MainActivity : ComponentActivity() {
 
         Surface(color = Color(0xFF0B0F16)) {
             Column(Modifier.fillMaxSize().padding(20.dp)) {
-                Text("WG Companion", color = Color(0xFFE8EDF5), fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text("wg-web 配套客户端 · 淡紫与鎏金", color = Color(0xFF5C6A7F), fontSize = 12.sp)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("WG Companion", color = Color(0xFFE8EDF5), fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text("wg-web 配套客户端 · 淡紫与鎏金", color = Color(0xFF5C6A7F), fontSize = 12.sp)
+                    }
+                    Text("v$appVersion", color = Color(0xFF5C6A7F), fontSize = 12.sp)
+                }
+
+                updateInfo?.let { info ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().clickable { openUrl(info.url) }.padding(top = 12.dp, bottom = 4.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1B2540))
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("发现新版本 ${info.latest}，建议更新", color = Color(0xFFE8EDF5), fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Text("前往下载 ›", color = Color(0xFF7C5CFF), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
 
                 Spacer(Modifier.height(18.dp))
                 Button(
