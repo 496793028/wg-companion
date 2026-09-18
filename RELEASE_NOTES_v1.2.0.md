@@ -65,6 +65,8 @@ wg-web 的配套 WireGuard 客户端：导入 `.conf` 即显示**姓名 / 授权
 
 1. 按芯片下载对应 zip：Intel → `WG Companion-1.2.0-mac.zip`；Apple 芯片（M1/M2/M3…）→ `WG Companion-1.2.0-arm64-mac.zip`。
 2. 解压得到 `WG Companion.app`，拖入「应用程序」（也可直接双击运行）。
+
+> 💡 想要更"官方"的 `.dmg` 分发？在**任意一台 Mac** 上执行 `sh desktop/mac-make-dmg.sh "WG Companion-1.2.0-mac.zip"` 即可一键转换（`hdiutil` 是 macOS 独有工具，Windows 端无法生成；脚本会自动识别版本号与架构命名产物）。DMG 与 zip 在 Gatekeeper 面前一视同仁，未签名包都需绕过一次。
 3. 前置条件：`brew install wireguard-tools`（提供 `wg-quick`）。开启 / 关闭隧道时系统会弹出管理员密码确认框，无需应用常驻 root。
 4. 账号登录同样可用：点「登录」→ 填服务器地址 / 用户名 / 密码 → 登录后配置自动置顶显示。
 
