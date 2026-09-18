@@ -208,6 +208,23 @@ class MainActivity : ComponentActivity() {
         val appVersion = remember {
             runCatching { packageManager.getPackageInfo(packageName, 0).versionName ?: "1.2.0" }.getOrElse { "1.2.0" }
         }
+        /* 深色 / 浅色双主题（与桌面端同款切换）：启动时从 SharedPreferences 恢复，点击 moonshot 图标切换 */
+        val prefs = remember { getSharedPreferences("wgc_theme", MODE_PRIVATE) }
+        var isDark by remember { mutableStateOf(prefs.getBoolean("is_dark", true)) }
+        val darkBg = Color(0xFF0B0F16);     val darkCard = Color(0xFF121926);      val darkCard2 = Color(0xFF161E2D)
+        val darkTxt = Color(0xFFE8EDF5);    val darkDim = Color(0xFF93A0B4);       val darkFaint = Color(0xFF5C6A7F)
+        val darkLine = Color(0xFF2A3648);   val darkBtn = Color(0xFF7C5CFF)
+        val lightBg = Color(0xFFF0F2F7);    val lightCard = Color(0xFFFFFFFF);     val lightCard2 = Color(0xFFF4F5FA)
+        val lightTxt = Color(0xFF162C40);   val lightDim = Color(0xFF5E6A82);      val lightFaint = Color(0xFF8A96B0)
+        val lightLine = Color(0xFFC8CEE0);  val lightBtn = Color(0xFF4C6DEF)
+        val surface = if (isDark) darkBg else lightBg
+        val cardBg  = if (isDark) darkCard else lightCard
+        val cardB2  = if (isDark) darkCard2 else lightCard2
+        val textClr = if (isDark) darkTxt else lightTxt
+        val dimClr  = if (isDark) darkDim else lightDim
+        val faintClr= if (isDark) darkFaint else lightFaint
+        val lineClr = if (isDark) darkLine else lightLine
+        val btnClr  = if (isDark) darkBtn else lightBtn
         var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
         LaunchedEffect(Unit) { updateInfo = checkGitHubUpdate(appVersion) }
 
@@ -237,25 +254,32 @@ class MainActivity : ComponentActivity() {
                 } else if (t != null && t.first) toast("未授予 VPN 权限，无法开启隧道")
             }
 
-        Surface(color = Color(0xFF0B0F16)) {
+        Surface(color = surface) {
             Column(Modifier.fillMaxSize().padding(20.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("WG Companion", color = Color(0xFFE8EDF5), fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                        Text("wg-web 配套客户端 · 淡紫与鎏金", color = Color(0xFF5C6A7F), fontSize = 12.sp)
+                        Text("WG Companion", color = textClr, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text("wg-web 配套客户端 · 淡紫与鎏金", color = faintClr, fontSize = 12.sp)
                     }
-                    Text("v$appVersion", color = Color(0xFF5C6A7F), fontSize = 12.sp)
+                    Text("v$appVersion", color = faintClr, fontSize = 12.sp)
+                    IconButton(
+                        onClick = {
+                            val next = !isDark
+                            isDark = next
+                            prefs.edit().putBoolean("is_dark", next).apply()
+                        }, modifier = Modifier.size(32.dp)
+                    ) { Text(if (isDark) "☀️" else "🌙", fontSize = 16.sp) }
                 }
 
                 updateInfo?.let { info ->
                     Card(
                         modifier = Modifier.fillMaxWidth().clickable { openUrl(info.url) }.padding(top = 12.dp, bottom = 4.dp),
                         shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1B2540))
+                        colors = CardDefaults.cardColors(containerColor = cardBg)
                     ) {
                         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("发现新版本 ${info.latest}，建议更新", color = Color(0xFFE8EDF5), fontSize = 13.sp, modifier = Modifier.weight(1f))
-                            Text("前往下载 ›", color = Color(0xFF7C5CFF), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("发现新版本 ${info.latest}，建议更新", color = textClr, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Text("前往下载 ›", color = btnClr, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -265,7 +289,7 @@ class MainActivity : ComponentActivity() {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = { pick.launch(arrayOf("text/plain", "application/octet-stream")) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C5CFF)),
+                        colors = ButtonDefaults.buttonColors(containerColor = btnClr),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f).height(46.dp)
                     ) { Text("导入配置（.conf）", fontSize = 14.sp) }
@@ -273,7 +297,7 @@ class MainActivity : ComponentActivity() {
                         onClick = { showLogin = true },
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = if (tunnels.any { it.accountUser != null }) Color(0xFF2FD07B) else Color(0xFFE8EDF5)),
+                            contentColor = if (tunnels.any { it.accountUser != null }) Color(0xFF2FD07B) else textClr),
                         modifier = Modifier.height(46.dp)
                     ) {
                         Text(
@@ -311,7 +335,7 @@ class MainActivity : ComponentActivity() {
     private fun TunnelCard(t: TunnelItem, onToggle: (Boolean) -> Unit) {
         val up = remember(t) { mutableStateOf(false) }
         val scale by animateFloatAsState(if (up.value) 1.012f else 0.995f, tween(280), label = "sc")
-        val knobColor by animateColorAsState(if (up.value) Color(0xFF2FD07B) else Color(0xFF8FA0B8), tween(260), label = "knob")
+        val knobColor by animateColorAsState(if (up.value) Color(0xFF2FD07B) else dimClr, tween(260), label = "knob")
         LaunchedEffect(t.file) {
             up.value = try {
                 WgcApp.backend.getState(SimpleTunnel(t.info.name)) == Tunnel.State.UP
@@ -326,7 +350,7 @@ class MainActivity : ComponentActivity() {
             Modifier.fillMaxWidth().scale(scale)
                 .background(
                     if (up.value) Brush.horizontalGradient(listOf(Color(0xFF12301F), Color(0xFF0F1A26)))
-                    else Brush.horizontalGradient(listOf(Color(0xFF121926), Color(0xFF121926))),
+                    else Brush.horizontalGradient(listOf(cardBg, cardBg)),
                     RoundedCornerShape(18.dp)
                 )
                 .clickable { onToggle(!up.value) }
@@ -335,7 +359,7 @@ class MainActivity : ComponentActivity() {
         ) {
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(t.info.name, color = Color(0xFFE8EDF5), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(t.info.name, color = textClr, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.width(8.dp))
                     Text(t.info.modeLabel, color = badgeColor, fontSize = 11.sp,
                         modifier = Modifier.background(badgeColor.copy(alpha = 0.15f), RoundedCornerShape(999.dp))
@@ -351,14 +375,14 @@ class MainActivity : ComponentActivity() {
                 Spacer(Modifier.height(7.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     (t.info.nets.take(4).ifEmpty { listOf("全部流量") }).forEach {
-                        Text(it, color = Color(0xFF93A0B4), fontSize = 10.5.sp,
-                            modifier = Modifier.background(Color(0xFF161E2D), RoundedCornerShape(999.dp))
+                        Text(it, color = dimClr, fontSize = 10.5.sp,
+                            modifier = Modifier.background(cardB2, RoundedCornerShape(999.dp))
                                 .padding(horizontal = 8.dp, vertical = 2.dp))
                     }
                 }
                 if (t.info.endpoint.isNotEmpty()) {
                     Spacer(Modifier.height(6.dp))
-                    Text(t.info.endpoint, color = Color(0xFF5C6A7F), fontSize = 11.sp)
+                    Text(t.info.endpoint, color = faintClr, fontSize = 11.sp)
                 }
             }
             Box(
@@ -412,16 +436,16 @@ class MainActivity : ComponentActivity() {
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = Color(0xFF121926),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2A3648)),
+                border = androidx.compose.foundation.BorderStroke(1.dp, lineClr),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState())) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("登录 WG Companion", color = Color(0xFFE8EDF5), fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                            Text("用 wg-web 平台账号登录，自动拉取你的配置", color = Color(0xFF5C6A7F), fontSize = 11.5.sp)
+                            Text("登录 WG Companion", color = textClr, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            Text("用 wg-web 平台账号登录，自动拉取你的配置", color = faintClr, fontSize = 11.5.sp)
                         }
-                        TextButton(onClick = { onClose() }) { Text("✕", color = Color(0xFF93A0B4)) }
+                        TextButton(onClick = { onClose() }) { Text("✕", color = dimClr) }
                     }
 
                     Spacer(Modifier.height(14.dp))
@@ -433,7 +457,7 @@ class MainActivity : ComponentActivity() {
                     )
                     Text(
                         "填写客户端能访问到的 wg-web 平台地址（含端口）——内网形如 http://192.168.1.10:8787；若平台有对外域名或反向代理，则填 https://vpn.example.com。登录成功后会自动记住该地址。",
-                        color = Color(0xFF5C6A7F), fontSize = 10.5.sp, lineHeight = 15.sp
+                        color = faintClr, fontSize = 10.5.sp, lineHeight = 15.sp
                     )
 
                     Spacer(Modifier.height(10.dp))
@@ -444,7 +468,7 @@ class MainActivity : ComponentActivity() {
                         singleLine = true,
                         trailingIcon = {
                             if (hist.isNotEmpty()) TextButton(onClick = { showHist = !showHist }) {
-                                Text(if (showHist) "收起" else "历史", fontSize = 11.5.sp, color = Color(0xFF93A0B4))
+                                Text(if (showHist) "收起" else "历史", fontSize = 11.5.sp, color = dimClr)
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -452,7 +476,7 @@ class MainActivity : ComponentActivity() {
                     /* 历史用户名下拉：输入即筛选，无匹配自动消失 */
                     if (showHist && filtered.isNotEmpty()) {
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF161E2D)),
+                            colors = CardDefaults.cardColors(containerColor = cardB2),
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
                         ) {
@@ -471,10 +495,10 @@ class MainActivity : ComponentActivity() {
                                             }
                                             showHist = false; hint = ""
                                         }) {
-                                            Text(h.username, color = Color(0xFFE8EDF5), fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                                            Text(h.username, color = textClr, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
                                             Text(
                                                 h.server.removePrefix("https://").removePrefix("http://") + if (h.hasPwd) " · 已保存密码" else "",
-                                                color = Color(0xFF5C6A7F), fontSize = 10.5.sp
+                                                color = faintClr, fontSize = 10.5.sp
                                             )
                                         }
                                         TextButton(onClick = {
@@ -496,7 +520,7 @@ class MainActivity : ComponentActivity() {
                         visualTransformation = if (showPwd) VisualTransformation.None else PasswordVisualTransformation(),
                         trailingIcon = {
                             TextButton(onClick = { showPwd = !showPwd }) {
-                                Text(if (showPwd) "隐藏" else "显示", fontSize = 11.5.sp, color = Color(0xFF93A0B4))
+                                Text(if (showPwd) "隐藏" else "显示", fontSize = 11.5.sp, color = dimClr)
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -506,19 +530,19 @@ class MainActivity : ComponentActivity() {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = remember && secure, enabled = secure,
                             onCheckedChange = { remember = it }, colors = CheckboxDefaults.colors(checkedColor = Color(0xFF4C8DFF)))
-                        Text("保存密码", color = Color(0xFF93A0B4), fontSize = 12.5.sp)
+                        Text("保存密码", color = dimClr, fontSize = 12.5.sp)
                         Spacer(Modifier.width(12.dp))
                         Checkbox(checked = autoLogin && secure, enabled = secure,
                             onCheckedChange = { autoLogin = it; if (it) remember = true },
                             colors = CheckboxDefaults.colors(checkedColor = Color(0xFF4C8DFF)))
-                        Text("自动登录", color = Color(0xFF93A0B4), fontSize = 12.5.sp)
+                        Text("自动登录", color = dimClr, fontSize = 12.5.sp)
                     }
                     if (!secure) {
                         Text("当前系统未提供安全存储，无法保存密码（自动登录不可用）。",
                             color = Color(0xFFD4AF37), fontSize = 11.sp)
                     }
                     Text("保存密码后可用「自动登录」在启动时自动登录；密码经系统密钥库加密，不以明文存储。",
-                        color = Color(0xFF5C6A7F), fontSize = 10.5.sp)
+                        color = faintClr, fontSize = 10.5.sp)
                     if (hint.isNotEmpty()) {
                         Spacer(Modifier.height(6.dp))
                         Text(hint, color = Color(0xFFE5484D), fontSize = 11.5.sp)
@@ -544,7 +568,7 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         enabled = !busy,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C5CFF)),
+                        colors = ButtonDefaults.buttonColors(containerColor = btnClr),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth().height(46.dp)
                     ) {
@@ -556,7 +580,7 @@ class MainActivity : ComponentActivity() {
                         val (srv, uname) = o
                         Spacer(Modifier.height(12.dp))
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("已登录：$uname", color = Color(0xFF93A0B4), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            Text("已登录：$uname", color = dimClr, fontSize = 12.sp, modifier = Modifier.weight(1f))
                             TextButton(onClick = {
                                 val n = performLogout(srv, uname)
                                 owner = null; onChanged(); toast("已退出登录，删除 $n 个配置")

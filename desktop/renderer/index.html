@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>WG Companion</title>
+<script>try{var t=localStorage.getItem('wgc-theme');if(t==='light')document.documentElement.dataset.theme='light'}catch(e){}</script>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -16,6 +17,11 @@
       <span class="tb-sub">wg-web 配套客户端</span>
     </div>
     <div class="tb-controls">
+      <button class="tb-btn" id="btnTheme" title="切换主题（深色／浅色）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
       <button class="tb-btn" data-act="ext" data-url="https://github.com/496793028/wg-web" title="打开 wg-web 项目">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
       </button>
@@ -36,6 +42,9 @@
             </linearGradient>
             <linearGradient id="gIdle" x1="0" y1="0" x2="1" y2="1">
               <stop offset="0" stop-color="#3a4657"/><stop offset="1" stop-color="#242d3a"/>
+            </linearGradient>
+            <linearGradient id="gIdleL" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#bcc5d4"/><stop offset="1" stop-color="#d5dce8"/>
             </linearGradient>
           </defs>
           <circle class="ring-bg" cx="100" cy="100" r="86"/>
@@ -72,9 +81,12 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
             导入配置
           </button>
-          <button class="btn" id="btnLogin" title="登录 wg-web 账号，自动拉取你的配置并置顶显示">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>
-            <span id="btnLoginTxt">登录</span>
+          <button class="btn login" id="btnLogin" title="登录 wg-web 账号，自动拉取你的配置并置顶显示">
+            <!-- 未登录：登录图标 + 「登录」；已登录悬停时整体切到「退出」（图标与文案由 CSS 切换） -->
+            <svg class="lg-ico lg-ico-in" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>
+            <svg class="lg-ico lg-ico-out" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+            <span id="btnLoginTxt" class="lg-label">登录</span>
+            <span class="lg-exit">退出</span>
           </button>
         </div>
       </div>
