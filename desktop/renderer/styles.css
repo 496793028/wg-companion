@@ -111,11 +111,16 @@ body{
 /* ---- 登录按钮：与「导入配置」同尺寸同质感（圆角/内边距/图标大小/光晕一致），配色换成鎏金以区分 ----
  * 未登录：鎏金 + 「登录」
  * 已登录：显示账号名；**鼠标悬停**时整颗按钮交叉淡入为红色，图标与文案一并变成「退出」，点击即退出账号 */
-.btn.login{background:linear-gradient(135deg,#b8901f,#e3c65a);border-color:transparent;color:#231a05;font-weight:600;
+.btn.login{background:linear-gradient(135deg,#b8901f,#e3c65a);border-color:transparent;color:#000;font-weight:600;
   box-shadow:0 6px 20px -8px rgba(212,175,55,.5);
-  transition:transform .15s,box-shadow .25s,border-color .2s,color .2s}
-.btn.login:hover{transform:translateY(-1px);border-color:transparent;box-shadow:0 8px 24px -8px rgba(212,175,55,.72)}
-.btn.login:active{transform:translateY(0) scale(.97)}
+  transition:box-shadow .25s,border-color .2s,color .2s}
+/* 不做位移 / 缩放反馈：登录 ↔ 退出 ↔ 账号名 状态切换时不再出现「变大又还原」的跳动 */
+.btn.login:hover{transform:none;border-color:transparent;box-shadow:0 8px 24px -8px rgba(212,175,55,.72)}
+.btn.login:active{transform:none}
+/* 「导入配置」与「登录」**固定同宽**、内容居中 —— 文案在 账号名/退出/登录 之间切换时按钮尺寸恒定，
+   不再出现宽度变化导致的「闪一下变大」。 */
+#btnImport,#btnLogin{width:118px;justify-content:center}
+#btnLogin .lg-label,#btnLogin .lg-exit{max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 红色变化层：渐变之间无法平滑插值，故叠一层红色渐变做透明度交叉淡入 */
 .btn.login::before{content:'';position:absolute;inset:0;opacity:0;
   background:linear-gradient(135deg,#a81f18,#e5484d);transition:opacity .22s ease}
