@@ -1,0 +1,36 @@
+'use strict';
+const { contextBridge, ipcRenderer } = require('electron');
+contextBridge.exposeInMainWorld('wgc', {
+  env: () => ipcRenderer.invoke('env'),
+  listTunnels: () => ipcRenderer.invoke('list-tunnels'),
+  importConf: paths => ipcRenderer.invoke('import-conf', paths),
+  deleteTunnel: f => ipcRenderer.invoke('delete-tunnel', f),
+  tunnelState: f => ipcRenderer.invoke('tunnel-state', f),
+  tunnelUp: f => ipcRenderer.invoke('tunnel-up', f),
+  tunnelDown: f => ipcRenderer.invoke('tunnel-down', f),
+  reapply: f => ipcRenderer.invoke('tunnel-reapply', f),
+  getCfg: () => ipcRenderer.invoke('get-cfg'),
+  saveCfg: c => ipcRenderer.invoke('save-cfg', c),
+  syncNow: () => ipcRenderer.invoke('sync-now'),
+  checkUpdate: () => ipcRenderer.invoke('check-update'),
+  /* 账号登录 / 历史用户名 / 安全保存密码 */
+  accountsList: () => ipcRenderer.invoke('accounts-list'),
+  accountsSave: p => ipcRenderer.invoke('accounts-save', p),
+  accountsForget: p => ipcRenderer.invoke('accounts-forget', p),
+  accountsGetPassword: p => ipcRenderer.invoke('accounts-get-password', p),
+  login: p => ipcRenderer.invoke('login', p),
+  logout: p => ipcRenderer.invoke('logout', p),
+  onAccountChanged: cb => ipcRenderer.on('account-changed', (_e, d) => cb(d)),
+  /* 关闭确认：主进程拦截 close 后请求渲染端弹自绘确认框 */
+  onAskClose: cb => ipcRenderer.on('ask-close', () => cb()),
+  closeDecision: (act, remember) => ipcRenderer.invoke('close-decision', act, remember),
+  watch: f => ipcRenderer.invoke('watch-tunnel', f),
+  unwatch: f => ipcRenderer.invoke('unwatch-tunnel', f),
+  onConfChanged: cb => ipcRenderer.on('conf-changed', (_e, data) => cb(data)),
+  onStatesChanged: cb => ipcRenderer.on('states-changed', (_e, data) => cb(data)),
+  saveOrder: files => ipcRenderer.invoke('save-order', files),
+  winMin: () => ipcRenderer.send('win-min'),
+  winMax: () => ipcRenderer.send('win-max'),
+  winClose: () => ipcRenderer.send('win-close'),
+  openExternal: url => ipcRenderer.send('open-external', url),
+});

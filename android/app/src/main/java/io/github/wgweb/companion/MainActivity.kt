@@ -1,0 +1,841 @@
+package io.github.wgweb.companion
+
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import kotlin.math.abs
+import androidx.compose.ui.window.Dialog
+import com.wireguard.android.backend.GoBackend
+import com.wireguard.android.backend.Tunnel
+import com.wireguard.config.Config
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.BufferedReader
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlin.math.max
+
+/* 主界面：导入配置 / 账号登录 → 显示 用户名 · 模式徽章（白名单·黑名单·全代理）· 授权网段 → 一键开合隧道。
+ * 隧道由 WireGuard GoBackend（系统 VpnService）承载，无需安装任何 WireGuard 应用。
+ *
+ * 账号登录（与桌面端能力对齐）：
+ *   · 「导入配置」右侧「登录」→ 用平台 VPN 账号（用户名 = VPN 配置姓名 + 密码）登录
+ *   · 登录后自动拉取该账号的 .conf 并**置顶显示**（卡片带「账号配置」标识），退出登录即删除
+ *   · 保存密码（Android Keystore AES-GCM 加密，不落明文）· 自动登录（启动静默登录）
+ *   · 历史用户名下拉：输入即筛选、无匹配自动消失、选中回填已保存密码、条目删除连同密码删除 */
+class MainActivity : ComponentActivity() {
+
+    private val pickConf =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? -> uri?.let { importConf(it) } }
+
+    private var pendingToggle: Pair<Boolean, File>? = null
+
+    /* 账号配置自动同步信号：自增后触发 WgcScreen 重新加载隧道列表 */
+    private val syncSignal = mutableStateOf(0)
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        intent?.data?.let { importConf(it) }
+        setContent { WgcScreen() }
+        startAutoSyncLoop()
+    }
+
+    /* ---------- 数据 ---------- */
+    private fun tunnelDir(): File = getExternalFilesDir(null) ?: filesDir
+
+    /** 接口名（GoBackend 用隧道名做网卡名）必须合法：仅 [A-Za-z0-9_=+.-]，且不超过 15 字符 */
+    private fun sanitizeTunnelName(raw: String): String {
+        val s = raw.replace(Regex("[^a-zA-Z0-9_=+.-]+"), "_").trim('_').take(15)
+        if (s.isNotEmpty()) return s
+        /* 中文姓名等无法转成合法接口名：用稳定短哈希 —— 同一账号重复登录命中同一文件（保持置顶位置） */
+        val h = raw.fold(0) { acc, ch -> (acc * 31 + ch.code) and 0x7fffffff }
+        return "acct" + h.toString(36).take(9)
+    }
+
+    private fun loadTunnels(): List<TunnelItem> {
+        val files = tunnelDir().listFiles { f -> f.name.endsWith(".conf") } ?: emptyArray()
+        /* 读取上一次拖拽保存的顺序（.tunnel_order，按文件名逐行），新配置落到末尾 */
+        val orderFile = File(tunnelDir(), ".tunnel_order")
+        val order = if (orderFile.exists())
+            orderFile.readLines().mapNotNull { it.trim().takeIf { s -> s.isNotEmpty() } }
+                .mapIndexed { i, n -> n to i }.toMap() else emptyMap()
+        return files.map { f ->
+            val text = try { f.readText() } catch (_: Exception) { "" }
+            val owner = AccountStore.tunnelOwner(this, f.name)
+            TunnelItem(f, ConfMeta.parseInfo(text, f.name), owner?.second)
+        }
+        /* 登录账号自动拉取的配置恒定置顶；其余按用户拖拽顺序（.tunnel_order），新配置落到末尾 */
+        .sortedWith(compareByDescending<TunnelItem> { it.accountUser != null }
+            .thenBy { order[it.file.name] ?: Int.MAX_VALUE }
+            .thenBy { it.file.name })
+    }
+
+    /** 持久化隧道卡片顺序（按文件名落盘到 .tunnel_order），用于跨自动同步 / 重启恢复 */
+    private fun saveTunnelOrder(list: List<TunnelItem>) {
+        try { File(tunnelDir(), ".tunnel_order").writeText(list.joinToString("\n") { it.file.name }) } catch (_: Exception) {}
+    }
+
+    private fun importConf(uri: Uri) {
+        try {
+            val raw = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                ?: return toast("无法读取该文件")
+            val name = ConfMeta.parseInfo(raw, uri.lastPathSegment ?: "tunnel").name
+            tunnelDir().mkdirs()
+            /* 原样保存（含 wg-meta 注释行），GoBackend 解析时会忽略注释 */
+            File(tunnelDir(), "${sanitizeTunnelName(name)}.conf").writeText(raw)
+            AccountStore.unmarkTunnel(this, "${sanitizeTunnelName(name)}.conf")
+            toast("已导入：$name")
+        } catch (e: Exception) {
+            toast("导入失败：${e.message}")
+        }
+    }
+
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+
+    /* ---------- 账号登录 ---------- */
+
+    /** 登录并落盘：成功返回 (true, 显示名)，失败返回 (false, 错误) */
+    private suspend fun performLogin(
+        serverRaw: String, username: String, password: String, remember: Boolean, autoLogin: Boolean,
+    ): Pair<Boolean, String> {
+        val r = withContext(Dispatchers.IO) { LoginApi.login(serverRaw, username, password) }
+        if (!r.ok) return false to r.error
+        val srv = LoginApi.normalizeServer(serverRaw)
+        val dir = tunnelDir(); dir.mkdirs()
+        /* 同一账号再次登录覆盖原文件（保持置顶位置不变）；不同账号重名才追加序号 */
+        val existing = AccountStore.filesOf(this, srv, username).firstOrNull()
+        val base = sanitizeTunnelName(existing?.removeSuffix(".conf") ?: username)
+        var name = base; var n = 2
+        if (existing == null) while (File(dir, "$name.conf").exists()) name = "${base.take(12)}-${n++}"
+        withContext(Dispatchers.IO) {
+            File(dir, "$name.conf").writeText(r.conf)
+            AccountStore.markTunnel(this@MainActivity, "$name.conf", srv, username)
+            AccountStore.remember(this@MainActivity, srv, username, remember, autoLogin,
+                if (remember) password else null)
+            AccountStore.setLastServer(this@MainActivity, srv)   // 登录成功才记住服务器地址
+        }
+        return true to r.name.ifEmpty { username }
+    }
+
+    /** 退出登录：关闭并删除该账号自动拉取的配置（历史条目与保存的密码保留） */
+    private fun performLogout(server: String, username: String): Int {
+        val files = AccountStore.filesOf(this, server, username)
+        files.forEach { f ->
+            val file = File(tunnelDir(), f)
+            try { WgcApp.backend.setState(SimpleTunnel(file.nameWithoutExtension), Tunnel.State.DOWN, null) } catch (_: Exception) {}
+            file.delete()
+        }
+        AccountStore.clearTunnelMarks(this, files)
+        return files.size
+    }
+
+    /* ---------- 版本号 + GitHub 更新检查 ---------- */
+    private data class UpdateInfo(val latest: String, val url: String)
+
+    private fun openUrl(url: String) {
+        try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
+    }
+
+    private fun semverGt(a: String, b: String): Boolean {
+        val pa = a.split('.').map { it.toIntOrNull() ?: 0 }
+        val pb = b.split('.').map { it.toIntOrNull() ?: 0 }
+        for (i in 0 until max(pa.size, pb.size)) {
+            val x = pa.getOrElse(i) { 0 }; val y = pb.getOrElse(i) { 0 }
+            if (x > y) return true
+            if (x < y) return false
+        }
+        return false
+    }
+
+    private suspend fun checkGitHubUpdate(current: String): UpdateInfo? = withContext(Dispatchers.IO) {
+        try {
+            val u = URL("https://api.github.com/repos/496793028/wg-companion/releases/latest")
+            val conn = (u.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 12000; readTimeout = 12000
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", "wg-companion-android/$current")
+                setRequestProperty("Accept", "application/vnd.github+json")
+            }
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+            val tag = Regex("\"tag_name\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+            val html = Regex("\"html_url\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+            if (tag != null && semverGt(tag.removePrefix("v"), current))
+                UpdateInfo(tag, html ?: "https://github.com/496793028/wg-companion/releases/latest")
+            else null
+        } catch (_: Exception) { null }
+    }
+
+    /* ---------- 隧道控制 ---------- */
+    private suspend fun applyToggle(wantUp: Boolean, confFile: File) {
+        try {
+            val name = confFile.nameWithoutExtension
+            val tunnel = SimpleTunnel(name)
+            val state = if (wantUp) Tunnel.State.UP else Tunnel.State.DOWN
+            val config = if (wantUp)
+                withContext(Dispatchers.IO) { Config.parse(BufferedReader(confFile.reader())) } else null
+            WgcApp.backend.setState(tunnel, state, config)
+        } catch (e: Exception) {
+            toast("操作失败：${e.message}")
+        }
+    }
+    private fun toggle(wantUp: Boolean, confFile: File) {
+        lifecycleScope.launch { applyToggle(wantUp, confFile) }
+    }
+    /* 单隧道模式：开启 target 前，先把其他所有已连隧道逐条断开（切换），避免同时运行多条。 */
+    private suspend fun downOtherTunnels(target: File, upPaths: Collection<String>) {
+        for (p in upPaths) {
+            if (p == target.absolutePath) continue
+            val f = File(p)
+            if (!f.exists()) continue
+            applyToggle(false, f)
+        }
+    }
+
+    /* Tunnel 接口的最小实现：后端内部保存状态 */
+    private class SimpleTunnel(private val n: String) : Tunnel {
+        override fun getName(): String = n
+        override fun onStateChange(newState: Tunnel.State) {}
+    }
+
+    /* ---------- 账号配置服务端自动同步（与桌面端 autoSyncTick 对齐） ---------- */
+    /* 启动后延迟 3s 再开始，随后每 30s 轮询一次：仅处理「账号登录拉取」的隧道
+       （其 .conf 内含 wg-meta 的只读 server/token/id），凭 token 拉取最新配置，
+       内容有变更则落盘，若隧道当前为 UP 则先 DOWN 再 UP 使其生效。 */
+    private fun startAutoSyncLoop() {
+        lifecycleScope.launch {
+            delay(3000)
+            while (isActive) {
+                try { syncAccountConfigs() } catch (_: Exception) {}
+                delay(30_000)
+            }
+        }
+    }
+
+    private suspend fun syncAccountConfigs() {
+        val dir = tunnelDir()
+        val files = dir.listFiles { f -> f.name.endsWith(".conf") } ?: emptyArray()
+        for (f in files) {
+            val text = try { f.readText() } catch (_: Exception) { continue }
+            AccountStore.tunnelOwner(this, f.name) ?: continue   // 仅处理账号登录拉取的隧道
+            val meta = ConfMeta.parseSyncMeta(text) ?: continue
+            if (meta.server.isEmpty() || meta.token.isEmpty()) continue
+            val newConf = withContext(Dispatchers.IO) { LoginApi.confByToken(meta.server, meta.token) } ?: continue
+            val normOld = text.trim().replace(Regex("\\r\\n"), "\n")
+            val normNew = newConf.trim().replace(Regex("\\r\\n"), "\n")
+            if (normNew == normOld) continue   // 无变更，跳过
+            val wasUp = try {
+                WgcApp.backend.getState(SimpleTunnel(f.nameWithoutExtension)) == Tunnel.State.UP
+            } catch (_: Exception) { false }
+            withContext(Dispatchers.IO) { f.writeText(newConf) }
+            if (wasUp) {
+                try {
+                    WgcApp.backend.setState(SimpleTunnel(f.nameWithoutExtension), Tunnel.State.DOWN, null)
+                    val config = withContext(Dispatchers.IO) { Config.parse(BufferedReader(f.reader())) }
+                    WgcApp.backend.setState(SimpleTunnel(f.nameWithoutExtension), Tunnel.State.UP, config)
+                } catch (_: Exception) {}
+            }
+        }
+        withContext(Dispatchers.Main) { syncSignal.value++ }   // 触发 UI 刷新
+    }
+
+    /* ---------- UI ---------- */
+    /* 主题色板：主屏 / TunnelCard / LoginDialog 三处共用，避免各 composable 各自硬编码深色 */
+    private class WgcPalette(dark: Boolean) {
+        val surface = if (dark) Color(0xFF0B0F16) else Color(0xFFF0F2F7)
+        val card    = if (dark) Color(0xFF121926) else Color(0xFFFFFFFF)
+        val card2   = if (dark) Color(0xFF161E2D) else Color(0xFFF4F5FA)
+        val text    = if (dark) Color(0xFFE8EDF5) else Color(0xFF162C40)
+        val dim     = if (dark) Color(0xFF93A0B4) else Color(0xFF5E6A82)
+        val faint   = if (dark) Color(0xFF5C6A7F) else Color(0xFF8A96B0)
+        val line    = if (dark) Color(0xFF2A3648) else Color(0xFFC8CEE0)
+        val btn     = if (dark) Color(0xFF7C5CFF) else Color(0xFF4C6DEF)
+    }
+
+    @Composable
+    private fun WgcScreen() {
+        val appVersion = remember {
+            runCatching { packageManager.getPackageInfo(packageName, 0).versionName ?: "1.2.0" }.getOrElse { "1.2.0" }
+        }
+        /* 深色 / 浅色双主题（与桌面端同款切换）：启动时从 SharedPreferences 恢复，点击 ☀️/🌙 切换 */
+        val prefs = remember { getSharedPreferences("wgc_theme", MODE_PRIVATE) }
+        var isDark by remember { mutableStateOf(prefs.getBoolean("is_dark", true)) }
+        val pal = WgcPalette(isDark)
+        val surface = pal.surface; val cardBg = pal.card; val cardB2 = pal.card2
+        val textClr = pal.text; val dimClr = pal.dim; val faintClr = pal.faint
+        val lineClr = pal.line; val btnClr = pal.btn
+        var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+        LaunchedEffect(Unit) { updateInfo = checkGitHubUpdate(appVersion) }
+
+        var tunnels by remember { mutableStateOf(loadTunnels()) }
+        /* 隧道开关状态（up）与连接中（connecting）各自按文件路径记忆，避免重渲染跳动；
+         * connecting 用于：连接/断开进行中禁止重复触发 + 开关展示「连接中」样式。 */
+        val upMap = remember { mutableStateMapOf<String, Boolean>() }
+        val connectingMap = remember { mutableStateMapOf<String, Boolean>() }
+        fun refreshState(file: File) {
+            val key = file.absolutePath
+            upMap[key] = try { WgcApp.backend.getState(SimpleTunnel(file.nameWithoutExtension)) == Tunnel.State.UP } catch (_: Exception) { false }
+        }
+        LaunchedEffect(Unit) { tunnels.forEach { refreshState(it.file) } }
+        /* 服务端配置自动同步完成后（syncSignal 自增）刷新隧道列表与状态徽标 */
+        LaunchedEffect(syncSignal.value) { tunnels = loadTunnels(); tunnels.forEach { refreshState(it.file) } }
+        var showLogin by remember { mutableStateOf(false) }
+        val scope = rememberCoroutineScope()
+
+        /* 拖拽排序状态（长按卡片拖动重排，账号配置卡片置顶不可移动） */
+        val listState = rememberLazyListState()
+        var dragFile by remember { mutableStateOf<String?>(null) }
+        var dragOffset by remember { mutableStateOf(0f) }
+        var dragStartY by remember { mutableStateOf(0f) }
+        val onCardDragStart: (String, Offset) -> Unit = ds@{ path, offset ->
+            val it = tunnels.firstOrNull { it.file.absolutePath == path } ?: return@ds
+            if (it.accountUser != null) {
+                Toast.makeText(this@MainActivity, "账号卡片不可调整位置", Toast.LENGTH_SHORT).show()
+                return@ds
+            }
+            dragFile = path
+            dragOffset = 0f
+            dragStartY = offset.y
+        }
+        val onCardDrag: (PointerInputChange, Offset) -> Unit = dd@{ change, dragAmount ->
+            val path = dragFile ?: run { change.consume(); return@dd }
+            change.consume()
+            dragOffset += dragAmount.y
+            val curY = dragStartY + dragOffset
+            val info = listState.layoutInfo
+            val from = tunnels.indexOfFirst { it.file.absolutePath == path }
+            if (from < 0) return@dd
+            /* 账号配置占据置顶区 [0, firstAccount)，非账号卡片不允许拖入该区 */
+            val firstAccount = tunnels.indexOfFirst { it.accountUser != null }.let { if (it < 0) 0 else it }
+            val nearest = info.visibleItemsInfo
+                .filter { it.index != from }
+                .minByOrNull { abs(it.offset + it.size / 2f - curY) }
+            if (nearest != null) {
+                val tgt = nearest.index.coerceIn(firstAccount, tunnels.lastIndex)
+                if (tgt != from) {
+                    val list = tunnels.toMutableList()
+                    val moved = list.removeAt(from)
+                    list.add(tgt, moved)
+                    tunnels = list
+                }
+            }
+        }
+        val onCardDragEnd: () -> Unit = {
+            if (dragFile != null) saveTunnelOrder(tunnels)
+            dragFile = null
+            dragOffset = 0f
+        }
+
+        /* 启动自动登录：勾选了「自动登录」且已安全保存密码的账号（只取最近一条），静默登录 */
+        LaunchedEffect(Unit) {
+            val h = AccountStore.history(this@MainActivity).firstOrNull { it.autoLogin && it.hasPwd } ?: return@LaunchedEffect
+            val pwd = withContext(Dispatchers.IO) { AccountStore.password(this@MainActivity, h.server, h.username) }
+            if (pwd.isEmpty()) return@LaunchedEffect
+            val (ok, msg) = performLogin(h.server, h.username, pwd, true, true)
+            if (ok) { tunnels = loadTunnels(); toast("已自动登录 $msg，配置已置顶") }
+        }
+
+        val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            uri?.let { importConf(it); tunnels = loadTunnels(); tunnels.forEach { refreshState(it.file) } }
+        }
+        val vpnPermissionLauncher =
+            rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+                val t = pendingToggle
+                pendingToggle = null
+                if (r.resultCode == RESULT_OK && t != null) {
+                    scope.launch {
+                        if (t.first) {                                   // 单隧道：先断开其他已连隧道
+                            val upPaths = upMap.entries.filter { it.value }.map { it.key }
+                            downOtherTunnels(t.second, upPaths)
+                            upPaths.forEach { upMap[it] = false }
+                        }
+                        applyToggle(t.first, t.second)
+                        delay(700)                                       // 让「连接中」动画走一拍
+                        connectingMap[t.second.absolutePath] = false
+                        refreshState(t.second)                           // 成功 → 旋钮拨动到 on
+                    }
+                } else if (t != null && t.first) {
+                    toast("未授予 VPN 权限，无法开启隧道")
+                    connectingMap[t.second.absolutePath] = false
+                } else if (t != null) {
+                    connectingMap[t.second.absolutePath] = false
+                }
+            }
+
+        /* 卡片开关：本隧道切换中禁止重复触发；其他隧道切换中也禁止（单隧道序贯切换）。
+         * 开启新隧道前先断开其他已连隧道，成功后才把旋钮拨动到 on。 */
+        fun toggleCard(item: TunnelItem) {
+            val key = item.file.absolutePath
+            if (connectingMap[key] == true) return                 // 本隧道切换中
+            if (connectingMap.values.any { it }) return            // 其他隧道切换中：禁止并发
+            val wantUp = upMap[key] != true
+            connectingMap[key] = true
+            val intent = WgcApp.vpnPermissionIntent(this@MainActivity)
+            if (wantUp && intent != null) {
+                pendingToggle = wantUp to item.file
+                vpnPermissionLauncher.launch(intent)
+            } else {
+                scope.launch {
+                    if (wantUp) {                                  // 单隧道：先断开其他已连隧道
+                        val upPaths = upMap.entries.filter { it.value }.map { it.key }
+                        downOtherTunnels(item.file, upPaths)
+                        upPaths.forEach { upMap[it] = false }
+                    }
+                    applyToggle(wantUp, item.file)
+                    delay(700)                                     // 让「连接中」动画走一拍
+                    connectingMap[key] = false
+                    refreshState(item.file)                        // 成功 → 旋钮拨动到 on
+                }
+            }
+        }
+
+        Surface(color = surface) {
+            Column(Modifier.fillMaxSize().padding(20.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("WG Companion", color = textClr, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text("wg-web 配套客户端 · 淡紫与鎏金", color = faintClr, fontSize = 12.sp)
+                    }
+                    Text("v$appVersion", color = faintClr, fontSize = 12.sp)
+                    IconButton(
+                        onClick = {
+                            val next = !isDark
+                            isDark = next
+                            prefs.edit().putBoolean("is_dark", next).apply()
+                        }, modifier = Modifier.size(32.dp)
+                    ) { Text(if (isDark) "☀️" else "🌙", fontSize = 16.sp) }
+                }
+
+                updateInfo?.let { info ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().clickable { openUrl(info.url) }.padding(top = 12.dp, bottom = 4.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = cardBg)
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("发现新版本 ${info.latest}，建议更新", color = textClr, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Text("前往下载 ›", color = btnClr, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(18.dp))
+                /* 导入配置 | 登录（登录按钮紧贴导入按钮右侧） */
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = { pick.launch(arrayOf("text/plain", "application/octet-stream")) },
+                        colors = ButtonDefaults.buttonColors(containerColor = btnClr),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f).height(46.dp)
+                    ) { Text("导入配置（.conf）", fontSize = 14.sp) }
+                    OutlinedButton(
+                        onClick = { showLogin = true },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = if (tunnels.any { it.accountUser != null }) Color(0xFF2FD07B) else textClr),
+                        modifier = Modifier.height(46.dp)
+                    ) {
+                        Text(
+                            tunnels.firstOrNull { it.accountUser != null }?.accountUser ?: "登录",
+                            fontSize = 14.sp, maxLines = 1
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(18.dp))
+                /* 有隧道正在切换时，其他卡片置灰禁用（单隧道序贯切换，避免并发） */
+                val anyConnecting = connectingMap.values.any { it }
+                LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    itemsIndexed(tunnels, key = { _, item -> item.file.absolutePath }) { _, item ->
+                        TunnelCard(
+                            t = item,
+                            isUp = upMap[item.file.absolutePath] ?: false,
+                            isConnecting = connectingMap[item.file.absolutePath] ?: false,
+                            disabled = anyConnecting && connectingMap[item.file.absolutePath] != true,
+                            isDragging = dragFile == item.file.absolutePath,
+                            dragOffset = if (dragFile == item.file.absolutePath) dragOffset.toInt() else 0,
+                            onToggleRequest = { toggleCard(item) },
+                            onDragStart = onCardDragStart,
+                            onDrag = onCardDrag,
+                            onDragEnd = onCardDragEnd,
+                            pal = pal
+                        )
+                    }
+                }
+            }
+        }
+
+        if (showLogin) {
+            LoginDialog(
+                onClose = { showLogin = false },
+                onChanged = { tunnels = loadTunnels(); tunnels.forEach { refreshState(it.file) } },
+                pal = pal,
+            )
+        }
+    }
+
+    data class TunnelItem(val file: File, val info: TunnelInfo, val accountUser: String? = null)
+
+    @OptIn(ExperimentalFoundationApi::class)
+    @Composable
+    private fun LazyItemScope.TunnelCard(
+        t: TunnelItem,
+        isUp: Boolean,
+        isConnecting: Boolean,
+        disabled: Boolean,
+        isDragging: Boolean,
+        dragOffset: Int,
+        onToggleRequest: () -> Unit,
+        onDragStart: (String, Offset) -> Unit,
+        onDrag: (PointerInputChange, Offset) -> Unit,
+        onDragEnd: () -> Unit,
+        pal: WgcPalette
+    ) {
+        val textClr = pal.text; val dimClr = pal.dim; val faintClr = pal.faint
+        val cardBg = pal.card; val cardB2 = pal.card2; val lineClr = pal.line
+        /* 旋钮：连接中停在左侧（off 位）+ 鎏金，启动成功才拨动到右侧（on 位，绿色）；
+         * 用动画驱动位移/颜色，重渲染不再闪动。 */
+        val knobOffset by animateDpAsState(
+            targetValue = if (isUp) 26.dp else 3.dp, animationSpec = tween(280), label = "knobOff"
+        )
+        val knobColor by animateColorAsState(
+            if (isConnecting) Color(0xFFD4AF37) else if (isUp) Color(0xFF2FD07B) else dimClr,
+            tween(260), label = "knobClr"
+        )
+        val scale by animateFloatAsState(
+            if (isConnecting) 1.0f else if (isUp) 1.012f else 0.995f, tween(280), label = "sc"
+        )
+        val badgeColor = when (t.info.mode) {
+            "deny" -> Color(0xFFD4AF37)
+            "proxy" -> Color(0xFFB69BFF)
+            else -> Color(0xFF4C8DFF)
+        }
+        /* 轨道 / 卡片底色：连接中（鎏金）· 已连接（绿）· 默认 */
+        val trackColor = if (isConnecting) Color(0x33D4AF37) else if (isUp) Color(0x332FD07B) else lineClr
+        val cardBrush = if (isConnecting) Brush.horizontalGradient(listOf(Color(0xFF302A12), Color(0xFF0F1A26)))
+            else if (isUp) Brush.horizontalGradient(listOf(Color(0xFF12301F), Color(0xFF0F1A26)))
+            else Brush.horizontalGradient(listOf(cardBg, cardBg))
+        Row(
+            Modifier.fillMaxWidth().alpha(if (disabled) 0.45f else 1f).scale(scale).animateItemPlacement()
+                .background(cardBrush, RoundedCornerShape(18.dp))
+                .then(if (isDragging) Modifier.offset { IntOffset(0, dragOffset) } else Modifier)
+                .clickable(enabled = !disabled) { onToggleRequest() }  // 单击卡片 = 开关隧道；其他隧道切换中置灰禁用
+                .pointerInput(t.file.absolutePath) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { offset -> onDragStart(t.file.absolutePath, offset) },
+                        onDrag = { change, dragAmount -> onDrag(change, dragAmount) },
+                        onDragEnd = { onDragEnd() },
+                        onDragCancel = { onDragEnd() }
+                    )
+                }
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(t.info.name, color = textClr, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.width(8.dp))
+                    Text(t.info.modeLabel, color = badgeColor, fontSize = 11.sp,
+                        modifier = Modifier.background(badgeColor.copy(alpha = 0.15f), RoundedCornerShape(999.dp))
+                            .padding(horizontal = 9.dp, vertical = 3.dp))
+                    /* 登录账号自动拉取的配置：绿色「账号配置」标识 */
+                    if (t.accountUser != null) {
+                        Spacer(Modifier.width(6.dp))
+                        Text("账号配置", color = Color(0xFF2FD07B), fontSize = 10.sp,
+                            modifier = Modifier.background(Color(0x1F2FD07B), RoundedCornerShape(999.dp))
+                                .padding(horizontal = 8.dp, vertical = 3.dp))
+                    }
+                }
+                Spacer(Modifier.height(7.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    (t.info.nets.take(4).ifEmpty { listOf("全部流量") }).forEach {
+                        Text(it, color = dimClr, fontSize = 10.5.sp,
+                            modifier = Modifier.background(cardB2, RoundedCornerShape(999.dp))
+                                .padding(horizontal = 8.dp, vertical = 2.dp))
+                    }
+                }
+                if (t.info.endpoint.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(t.info.endpoint, color = faintClr, fontSize = 11.sp)
+                }
+            }
+            Box(
+                Modifier.size(width = 52.dp, height = 28.dp)
+                    .background(trackColor, CircleShape)
+                    .clickable { onToggleRequest() },
+                contentAlignment = Alignment.CenterStart
+            ) {
+                Box(Modifier.padding(start = knobOffset).size(22.dp).background(knobColor, CircleShape))
+                if (isConnecting) {                                  // 连接中：旋钮左侧 + 鎏金进度环，表达「启动中」
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = Color(0xFFD4AF37), strokeWidth = 2.dp
+                    )
+                }
+            }
+        }
+    }
+
+    /* ---------- 登录面板（Dialog，华丽卡片 + 历史用户名下拉） ---------- */
+    @Composable
+    private fun LoginDialog(onClose: () -> Unit, onChanged: () -> Unit, pal: WgcPalette) {
+        val textClr = pal.text; val dimClr = pal.dim; val faintClr = pal.faint
+        val cardBg = pal.card; val cardB2 = pal.card2; val lineClr = pal.line; val btnClr = pal.btn
+        val ctx = this@MainActivity
+        val scope = rememberCoroutineScope()
+
+        var server by remember { mutableStateOf("") }
+        var user by remember { mutableStateOf("") }
+        var pwd by remember { mutableStateOf("") }
+        var remember by remember { mutableStateOf(false) }
+        var autoLogin by remember { mutableStateOf(false) }
+        var showPwd by remember { mutableStateOf(false) }
+        var fromSaved by remember { mutableStateOf(false) }   // 密码是否来自「已保存的安全存储」回填（此时禁止显示、输入即清空）
+        var savedPwdLen by remember { mutableStateOf(0) }     // 回填的保存密码长度，用于首次输入时精准剥离
+        var showHist by remember { mutableStateOf(true) }
+        var busy by remember { mutableStateOf(false) }
+        var hint by remember { mutableStateOf("") }
+        var hist by remember { mutableStateOf(AccountStore.history(ctx)) }
+        val secure = remember { AccountStore.secureAvailable() }
+
+        /* 已有登录账号（取置顶的账号配置） */
+        var owner by remember { mutableStateOf(
+            (tunnelDir().listFiles { f -> f.name.endsWith(".conf") } ?: emptyArray())
+                .mapNotNull { AccountStore.tunnelOwner(ctx, it.name)?.let { o -> it.name to o } }
+                .firstOrNull()
+        ) }
+
+        LaunchedEffect(Unit) {
+            /* 服务器地址回填「上次**成功登录过**的那个地址」（不是从别处猜 —— 避免把
+               127.0.0.1 这类只对本机有效的地址当默认值填进去） */
+            server = AccountStore.lastServer(ctx)
+            val h = hist.firstOrNull()
+            if (h != null) { user = h.username; remember = h.remember; autoLogin = h.autoLogin }
+            if (!secure) { remember = false; autoLogin = false }
+        }
+
+        val filtered = hist.filter { user.isBlank() || it.username.contains(user, ignoreCase = true) }
+
+        Dialog(onDismissRequest = { onClose() }) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Color(0xFF121926),
+                border = androidx.compose.foundation.BorderStroke(1.dp, lineClr),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState())) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("登录 WG Companion", color = textClr, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            Text("用 wg-web 平台账号登录，自动拉取你的配置", color = faintClr, fontSize = 11.5.sp)
+                        }
+                        TextButton(onClick = { onClose() }) { Text("✕", color = dimClr) }
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+                    OutlinedTextField(
+                        value = server, onValueChange = { server = it },
+                        label = { Text("服务器地址") },
+                        placeholder = { Text("http://192.168.1.10:8787") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "填写客户端能访问到的 wg-web 平台地址（含端口）——内网形如 http://192.168.1.10:8787；若平台有对外域名或反向代理，则填 https://vpn.example.com。登录成功后会自动记住该地址。",
+                        color = faintClr, fontSize = 10.5.sp, lineHeight = 15.sp
+                    )
+
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = user,
+                        onValueChange = { user = it; showHist = true },
+                        label = { Text("用户名（= VPN 配置姓名）") },
+                        singleLine = true,
+                        trailingIcon = {
+                            if (hist.isNotEmpty()) TextButton(onClick = { showHist = !showHist }) {
+                                Text(if (showHist) "收起" else "历史", fontSize = 11.5.sp, color = dimClr)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    /* 历史用户名下拉：输入即筛选，无匹配自动消失 */
+                    if (showHist && filtered.isNotEmpty()) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = cardB2),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                        ) {
+                            Column {
+                                filtered.take(6).forEach { h ->
+                                    Row(
+                                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(Modifier.weight(1f).clickable {
+                                            server = h.server; user = h.username
+                                            remember = h.remember; autoLogin = h.autoLogin
+                                            if (h.hasPwd) {
+                                                val saved = AccountStore.password(ctx, h.server, h.username)
+                                                if (saved.isNotEmpty()) {
+                                                    pwd = saved                       /* 曾保存密码 -> 一并回填 */
+                                                    fromSaved = true                  /* 来自安全存储：禁止显示、输入即清空 */
+                                                    savedPwdLen = saved.length
+                                                    showPwd = false
+                                                } else { pwd = ""; fromSaved = false; savedPwdLen = 0 }
+                                            } else { pwd = ""; fromSaved = false; savedPwdLen = 0 }
+                                            showHist = false; hint = ""
+                                        }) {
+                                            Text(h.username, color = textClr, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                                            Text(
+                                                h.server.removePrefix("https://").removePrefix("http://") + if (h.hasPwd) " · 已保存密码" else "",
+                                                color = faintClr, fontSize = 10.5.sp
+                                            )
+                                        }
+                                        TextButton(onClick = {
+                                            AccountStore.forget(ctx, h.server, h.username)   /* 连同保存的密码一起删除 */
+                                            hist = AccountStore.history(ctx)
+                                            toast("已删除该条目及其保存的密码")
+                                        }) { Text("删除", color = Color(0xFFE5484D), fontSize = 11.5.sp) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = pwd,
+                        onValueChange = { nv ->
+                            /* 用户开始修改回填的保存密码：先清空（剥离已保存密文段），恢复显示按钮 */
+                            if (fromSaved) {
+                                pwd = if (nv.length > savedPwdLen) nv.substring(savedPwdLen) else ""
+                                fromSaved = false; showPwd = false; savedPwdLen = 0
+                            } else pwd = nv
+                        },
+                        label = { Text("密码") },
+                        singleLine = true,
+                        visualTransformation = if (showPwd && !fromSaved) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            if (fromSaved) {
+                                TextButton(onClick = {}, enabled = false) {
+                                    Text("显示", fontSize = 11.5.sp, color = faintClr)
+                                }
+                            } else {
+                                TextButton(onClick = { showPwd = !showPwd }) {
+                                    Text(if (showPwd) "隐藏" else "显示", fontSize = 11.5.sp, color = dimClr)
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = remember && secure, enabled = secure,
+                            onCheckedChange = { remember = it }, colors = CheckboxDefaults.colors(checkedColor = Color(0xFF4C8DFF)))
+                        Text("保存密码", color = dimClr, fontSize = 12.5.sp)
+                        Spacer(Modifier.width(12.dp))
+                        Checkbox(checked = autoLogin && secure, enabled = secure,
+                            onCheckedChange = { autoLogin = it; if (it) remember = true },
+                            colors = CheckboxDefaults.colors(checkedColor = Color(0xFF4C8DFF)))
+                        Text("自动登录", color = dimClr, fontSize = 12.5.sp)
+                    }
+                    if (!secure) {
+                        Text("当前系统未提供安全存储，无法保存密码（自动登录不可用）。",
+                            color = Color(0xFFD4AF37), fontSize = 11.sp)
+                    }
+                    Text("保存密码后可用「自动登录」在启动时自动登录；密码经系统密钥库加密，不以明文存储。",
+                        color = faintClr, fontSize = 10.5.sp)
+                    if (hint.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(hint, color = Color(0xFFE5484D), fontSize = 11.5.sp)
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+                    Button(
+                        onClick = {
+                            if (server.isBlank()) { hint = "请填写服务器地址"; return@Button }
+                            if (user.isBlank()) { hint = "请填写用户名"; return@Button }
+                            if (pwd.isEmpty()) { hint = "请填写密码"; return@Button }
+                            showHist = false; hint = ""; busy = true
+                            scope.launch {
+                                val (ok, msg) = performLogin(server, user, pwd, remember && secure, autoLogin && secure)
+                                busy = false
+                                if (ok) {
+                                    hist = AccountStore.history(ctx)      /* 刷新历史与条目状态 */
+                                    owner = (tunnelDir().listFiles { f -> f.name.endsWith(".conf") } ?: emptyArray())
+                                        .mapNotNull { AccountStore.tunnelOwner(ctx, it.name)?.let { o -> it.name to o } }
+                                        .firstOrNull()
+                                    onChanged(); toast("已登录 $msg，配置已置顶")
+                                } else hint = msg
+                            }
+                        },
+                        enabled = !busy,
+                        colors = ButtonDefaults.buttonColors(containerColor = btnClr),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().height(46.dp)
+                    ) {
+                        if (busy) CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                        else Text("登 录", fontSize = 14.sp)
+                    }
+
+                    owner?.let { (file, o) ->
+                        val (srv, uname) = o
+                        Spacer(Modifier.height(12.dp))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("已登录：$uname", color = dimClr, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            TextButton(onClick = {
+                                val n = performLogout(srv, uname)
+                                owner = null; onChanged(); toast("已退出登录，删除 $n 个配置")
+                            }) { Text("退出登录", color = Color(0xFFE5484D), fontSize = 12.sp) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

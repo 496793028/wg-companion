@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>WG Companion</title>
+<script>try{var t=localStorage.getItem('wgc-theme');if(t==='light')document.documentElement.dataset.theme='light'}catch(e){}</script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- 自绘标题栏 -->
+  <header class="titlebar">
+    <div class="tb-brand">
+      <span class="tb-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      </span>
+      <span>WG Companion</span>
+      <span class="tb-sub">wg-web 配套客户端</span>
+    </div>
+    <div class="tb-controls">
+      <button class="tb-btn" id="btnTheme" title="切换主题（深色／浅色）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
+      <button class="tb-btn" data-act="ext" data-url="https://github.com/496793028/wg-web" title="打开 wg-web 项目">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>
+      </button>
+      <button class="tb-btn" data-act="min"><svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+      <button class="tb-btn" data-act="max"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
+      <button class="tb-btn tb-close" data-act="close"><svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <!-- 左：状态主环 -->
+    <section class="hero app-in">
+      <div class="ring-wrap">
+        <svg class="ring" viewBox="0 0 200 200">
+          <defs>
+            <linearGradient id="gUp" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#2f6bff"/>
+            </linearGradient>
+            <linearGradient id="gIdle" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#3a4657"/><stop offset="1" stop-color="#242d3a"/>
+            </linearGradient>
+            <linearGradient id="gIdleL" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#bcc5d4"/><stop offset="1" stop-color="#d5dce8"/>
+            </linearGradient>
+          </defs>
+          <circle class="ring-bg" cx="100" cy="100" r="86"/>
+          <circle class="ring-fg" id="ringFg" cx="100" cy="100" r="86"/>
+        </svg>
+        <div class="ring-core">
+          <div class="state-dot" id="stateDot"></div>
+          <div class="state-text" id="stateText">未连接</div>
+          <div class="state-name" id="stateName">导入配置开始使用</div>
+        </div>
+      </div>
+      <div class="hero-meta" id="heroMeta">
+        <div class="hero-badges">
+          <span class="mode-badge" id="heroMode" hidden>白名单</span>
+        </div>
+        <div class="chips" id="heroNets"></div>
+        <div class="hero-endpoint mono" id="heroEndpoint" hidden></div>
+      </div>
+      <button class="btn-power" id="btnPower" disabled data-act="power">
+        <svg class="pw-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
+      </button>
+      <div class="power-hint" id="powerHint">选择下方隧道后开启</div>
+    </section>
+
+    <!-- 右：隧道列表 -->
+    <section class="side app-in">
+      <div class="side-hd">
+        <h2>我的隧道</h2>
+        <div class="side-hd-acts">
+          <button class="tb-btn" id="btnSettings" title="设置" style="-webkit-app-region:no-drag">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+          <button class="btn primary" data-act="import" id="btnImport">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            导入配置
+          </button>
+          <button class="btn login" id="btnLogin" title="登录 wg-web 账号，自动拉取你的配置并置顶显示">
+            <!-- 未登录：登录图标 + 「登录」；已登录悬停时整体切到「退出」（图标与文案由 CSS 切换） -->
+            <svg class="lg-ico lg-ico-in" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>
+            <svg class="lg-ico lg-ico-out" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+            <span id="btnLoginTxt" class="lg-label">登录</span>
+            <span class="lg-exit">退出</span>
+          </button>
+        </div>
+      </div>
+      <div class="tunnels" id="tunnelList"></div>
+      <div class="empty" id="emptyTip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+        <p>把 wg-web 下载的 <b>.conf</b> 拖进来，或点击「导入配置」。<br>服务端下发的配置会按间隔自动拉取更新（设置中可调整）。</p>
+      </div>
+      <div class="plat-tip" id="platTip"></div>
+    </section>
+  </main>
+
+  <div class="drop-mask" id="dropMask"><div class="drop-inner">松开导入配置文件</div></div>
+  <div class="toast-wrap" id="toastWrap"></div>
+
+  <!-- 版本号角标（右下角） -->
+  <div class="version-tag" id="versionTag"></div>
+
+  <!-- 更新提示横幅 -->
+  <div class="update-banner" id="updateBanner" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+    <span class="ub-text" id="updateText">发现新版本</span>
+    <button class="btn primary sm" id="btnUpdateGo">前往下载</button>
+    <button class="ub-x" id="btnUpdateClose" aria-label="关闭">✕</button>
+  </div>
+
+  <!-- 设置弹窗 -->
+  <div class="modal-mask" id="settingsModal" hidden>
+    <div class="modal">
+      <div class="modal-hd"><h3>设置</h3><button class="modal-x" id="btnSettingsClose" aria-label="关闭">✕</button></div>
+      <div class="modal-bd">
+        <label class="row"><span>服务端自动更新</span><input type="checkbox" id="cfgAutoUpdate"></label>
+        <p class="hint">开启后，客户端按间隔从 wg-web 拉取最新配置并自动生效（仅服务端下发的配置参与）。</p>
+        <label class="row"><span>检查间隔（秒）</span><input type="number" id="cfgInterval" min="10" max="3600" step="5" value="30"></label>
+        <label class="row"><span>允许自签名证书</span><input type="checkbox" id="cfgInsecure"></label>
+        <p class="hint">内网部署常用自签名 HTTPS；开启后仅放松 TLS 校验，不影响传输加密。</p>
+        <div class="modal-acts">
+          <button class="btn" id="btnSyncNow">立即检查更新</button>
+          <button class="btn primary" id="btnSettingsSave">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 登录面板（点击「登录」后以动画展开） ===== -->
+  <div class="login-mask" id="loginMask" hidden>
+    <div class="login-card" id="loginCard">
+      <div class="lg-glow"></div>
+      <div class="lg-hd">
+        <div class="lg-brand">
+          <span class="lg-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+          </span>
+          <div><div class="lg-t">登录 WG Companion</div>
+            <div class="lg-s">用 wg-web 平台账号登录，自动拉取你的配置</div></div>
+        </div>
+        <button class="lg-x" id="btnLoginClose" aria-label="关闭">✕</button>
+      </div>
+      <div class="lg-bd">
+        <div class="lg-field">
+          <span class="lg-label">服务器地址</span>
+          <input id="lgServer" placeholder="http://192.168.1.10:8787" spellcheck="false" autocomplete="off">
+          <div class="lg-tip">填写<b>客户端能访问到</b>的 wg-web 平台地址（含端口）：内网一般形如 <code>http://192.168.1.10:8787</code>；若平台有对外域名或反向代理，则填 <code>https://vpn.example.com</code>。登录成功后会自动记住该地址。</div>
+        </div>
+        <div class="lg-field" id="lgUserWrap">
+          <span class="lg-label">用户名</span>
+          <input id="lgUser" placeholder="你的姓名（即 VPN 配置用户名）" spellcheck="false" autocomplete="off">
+          <div class="lg-hist" id="lgHist" hidden></div>
+        </div>
+        <div class="lg-field">
+          <span class="lg-label">密码</span>
+          <span class="lg-pw">
+            <input id="lgPass" type="password" placeholder="登录密码" autocomplete="off">
+            <button class="lg-eye" id="lgEye" type="button" title="显示密码" aria-label="显示密码">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </span>
+        </div>
+        <div class="lg-opts">
+          <label class="lg-chk"><input type="checkbox" id="lgRemember"><span class="lg-box"></span><span>保存密码</span></label>
+          <label class="lg-chk"><input type="checkbox" id="lgAuto"><span class="lg-box"></span><span>自动登录</span></label>
+        </div>
+        <div class="lg-note" id="lgNote"></div>
+        <div class="lg-hint" id="lgHint"></div>
+        <button class="btn primary block lg-submit" id="lgSubmit">
+          <span class="lg-spin"></span><span class="lg-submit-t">登 录</span>
+        </button>
+        <div class="lg-foot" id="lgFoot"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 关闭确认（华丽弹窗：两个按钮均带悬浮/按压/光泽动画） ===== -->
+  <div class="exit-mask" id="exitMask" hidden>
+    <div class="exit-card" id="exitCard">
+      <div class="exit-halo"></div>
+      <div class="exit-ico">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg>
+      </div>
+      <div class="exit-t">要关闭窗口吗？</div>
+      <div class="exit-s">隧道以系统服务方式运行，<b>最小化到托盘</b>后连接不受影响，托盘图标可随时唤回。</div>
+      <div class="exit-acts">
+        <button class="exit-btn min" id="exMin">
+          <span class="eb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></span>
+          <span class="eb-t">最小化到托盘</span><span class="eb-shine"></span>
+        </button>
+        <button class="exit-btn quit" id="exQuit">
+          <span class="eb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg></span>
+          <span class="eb-t">退出程序</span><span class="eb-shine"></span>
+        </button>
+      </div>
+      <label class="lg-chk exit-remember"><input type="checkbox" id="exRemember"><span class="lg-box"></span><span>记住我的选择</span></label>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

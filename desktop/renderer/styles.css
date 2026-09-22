@@ -1,0 +1,442 @@
+/* ============ WG Companion — 与 wg-web 同源设计语言 ============ */
+:root{
+  --bg:#0b0f16; --panel:#121926; --panel2:#161e2d; --line:#202a3a; --line2:#2a3648;
+  --txt:#e8edf5; --dim:#93a0b4; --faint:#5c6a7f;
+  --accent:#4c8dff; --accent2:#8b5cf6;
+  --ok:#2fd07b; --gold:#d4af37; --purple:#b69bff; --danger:#e5484d; --warn:#f5b544;
+  --ease:cubic-bezier(.22,1,.36,1);
+  --shadow:0 18px 50px -22px rgba(0,0,0,.75);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  background:radial-gradient(1100px 700px at 85% -10%, rgba(76,141,255,.10), transparent 55%),
+             radial-gradient(900px 600px at 0% 0%, rgba(139,92,246,.08), transparent 55%),
+             var(--bg);
+  color:var(--txt); overflow:hidden; user-select:none;
+  animation:appIn .5s var(--ease);
+}
+@keyframes appIn{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
+.mono{font-family:Consolas,"JetBrains Mono",monospace}
+
+/* ---- 标题栏 ---- */
+.titlebar{display:flex;align-items:center;justify-content:space-between;height:44px;padding:0 12px 0 16px;
+  -webkit-app-region:drag;border-bottom:1px solid var(--line);background:rgba(18,25,38,.6)}
+.tb-brand{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:600}
+.tb-logo{width:24px;height:24px;border-radius:8px;display:grid;place-items:center;color:#fff;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 0 14px rgba(76,141,255,.35)}
+.tb-logo svg{width:14px;height:14px}
+.tb-sub{font-size:11px;font-weight:400;color:var(--faint)}
+.tb-controls{display:flex;gap:4px;-webkit-app-region:no-drag}
+.tb-btn{width:32px;height:28px;border:0;border-radius:8px;background:transparent;color:var(--dim);
+  display:grid;place-items:center;cursor:pointer;position:relative;overflow:hidden;transition:background .2s,color .2s}
+.tb-btn svg{width:14px;height:14px}
+.tb-btn:hover{background:var(--line2);color:var(--txt)}
+.tb-close:hover{background:var(--danger);color:#fff}
+/* 点击涟漪（全部按钮通用） */
+.ripple{position:absolute;border-radius:50%;background:rgba(255,255,255,.25);transform:scale(0);
+  animation:ripple .55s var(--ease) forwards;pointer-events:none}
+@keyframes ripple{to{transform:scale(2.6);opacity:0}}
+
+/* ---- 主区 ---- */
+.stage{display:grid;grid-template-columns:minmax(340px,420px) 1fr;gap:26px;height:calc(100% - 44px);padding:26px}
+.hero{background:linear-gradient(165deg,var(--panel),var(--panel2));border:1px solid var(--line2);
+  border-radius:22px;box-shadow:var(--shadow);display:flex;flex-direction:column;align-items:center;
+  padding:30px 26px;gap:16px;position:relative;overflow:hidden}
+.hero::before{content:'';position:absolute;inset:-40%;background:
+  conic-gradient(from 0deg, transparent 0 70%, rgba(76,141,255,.08) 82%, transparent 92%);
+  animation:heroHalo 9s linear infinite;pointer-events:none}
+@keyframes heroHalo{to{transform:rotate(1turn)}}
+.app-in{animation:riseIn .55s var(--ease) both}
+.side{animation-delay:.08s}
+@keyframes riseIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+
+/* 状态圆环 */
+.ring-wrap{position:relative;width:210px;height:210px;flex:none}
+.ring{width:100%;height:100%;transform:rotate(-90deg)}
+.ring-bg{fill:none;stroke:var(--line);stroke-width:8}
+.ring-fg{fill:none;stroke:url(#gIdle);stroke-width:8;stroke-linecap:round;
+  stroke-dasharray:540.4;stroke-dashoffset:540.4;transition:stroke-dashoffset 1s var(--ease), stroke .4s}
+.ring-fg.up{stroke:url(#gUp)}
+.ring-wrap.connecting .ring{animation:spin 1.1s linear infinite}
+@keyframes spin{to{transform:rotate(270deg)}}
+.ring-wrap.up{animation:pulse 2.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{filter:drop-shadow(0 0 6px rgba(47,208,123,.25))}50%{filter:drop-shadow(0 0 22px rgba(47,208,123,.5))}}
+.ring-core{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}
+.state-dot{width:10px;height:10px;border-radius:50%;background:var(--faint);transition:background .4s,box-shadow .4s}
+.state-dot.up{background:var(--ok);box-shadow:0 0 12px var(--ok)}
+.state-dot.connecting{background:var(--warn);animation:blink .7s ease-in-out infinite alternate}
+@keyframes blink{to{opacity:.35}}
+.state-text{font-size:21px;font-weight:700;letter-spacing:1px}
+.state-name{font-size:12.5px;color:var(--dim);max-width:150px;text-align:center;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 徽章 / 网段胶囊 —— 与 wg-web 同款语言 */
+.mode-badge{font-size:11.5px;padding:3px 10px;border-radius:999px;border:1px solid var(--line2);
+  background:rgba(76,141,255,.12);color:var(--accent);font-weight:600}
+.mode-badge.deny{border-color:rgba(212,175,55,.55);background:rgba(212,175,55,.14);color:var(--gold)}
+.mode-badge.proxy{border-color:rgba(167,139,250,.55);background:rgba(167,139,250,.14);color:var(--purple)}
+.hero-badges{min-height:24px;display:flex;gap:8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;max-height:64px;overflow:auto}
+.chip{font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--line2);color:var(--dim);
+  background:var(--panel2);animation:chipIn .3s var(--ease) both}
+@keyframes chipIn{from{opacity:0;transform:scale(.7)}to{opacity:1;transform:none}}
+.hero-endpoint{font-size:11.5px;color:var(--faint)}
+
+/* 电源按钮 */
+.btn-power{width:76px;height:76px;border-radius:50%;border:1px solid var(--line2);cursor:pointer;
+  background:linear-gradient(165deg,#1a2331,#141b28);color:var(--dim);display:grid;place-items:center;
+  position:relative;overflow:hidden;transition:color .3s,border-color .3s,box-shadow .3s,transform .15s}
+.btn-power svg{width:30px;height:30px;transition:transform .4s var(--ease)}
+.btn-power:hover{color:var(--txt);transform:translateY(-2px)}
+.btn-power:active svg{transform:scale(.82)}
+.btn-power.up{color:var(--ok);border-color:rgba(47,208,123,.5);box-shadow:0 0 26px rgba(47,208,123,.28)}
+.btn-power:disabled{opacity:.45;cursor:not-allowed;transform:none}
+.power-hint{font-size:11.5px;color:var(--faint)}
+
+/* ---- 右侧隧道列表 ---- */
+.side{display:flex;flex-direction:column;gap:14px;min-height:0}
+.side-hd{display:flex;align-items:center;justify-content:space-between}
+.side-hd h2{font-size:16px}
+.btn{border:1px solid var(--line2);background:var(--panel2);color:var(--txt);border-radius:11px;
+  padding:9px 16px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;
+  position:relative;overflow:hidden;transition:transform .15s,box-shadow .25s,border-color .2s}
+.btn svg{width:15px;height:15px}
+.btn:hover{transform:translateY(-1px);border-color:var(--accent);box-shadow:0 6px 18px -8px rgba(76,141,255,.4)}
+.btn:active{transform:translateY(0) scale(.97)}
+.btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border-color:transparent;color:#fff;
+  box-shadow:0 6px 20px -8px rgba(76,141,255,.55)}
+
+/* ---- 登录按钮：与「导入配置」同尺寸同质感（圆角/内边距/图标大小/光晕一致），配色换成鎏金以区分 ----
+ * 未登录：鎏金 + 「登录」
+ * 已登录：显示账号名；**鼠标悬停**时整颗按钮交叉淡入为红色，图标与文案一并变成「退出」，点击即退出账号 */
+.btn.login{background:linear-gradient(135deg,#b8901f,#e3c65a);border-color:transparent;color:#000;font-weight:600;
+  box-shadow:0 6px 20px -8px rgba(212,175,55,.5);
+  transition:box-shadow .25s,border-color .2s,color .2s}
+/* 不做位移 / 缩放反馈：登录 ↔ 退出 ↔ 账号名 状态切换时不再出现「变大又还原」的跳动 */
+.btn.login:hover{transform:none;border-color:transparent;box-shadow:0 8px 24px -8px rgba(212,175,55,.72)}
+.btn.login:active{transform:none}
+/* 「导入配置」与「登录」**固定同宽**、内容居中 —— 文案在 账号名/退出/登录 之间切换时按钮尺寸恒定，
+   不再出现宽度变化导致的「闪一下变大」。 */
+#btnImport,#btnLogin{width:118px;justify-content:center}
+#btnLogin .lg-label,#btnLogin .lg-exit{max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 红色变化层：渐变之间无法平滑插值，故叠一层红色渐变做透明度交叉淡入 */
+.btn.login::before{content:'';position:absolute;inset:0;opacity:0;
+  background:linear-gradient(135deg,#a81f18,#e5484d);transition:opacity .22s ease}
+.btn.login>*{position:relative;z-index:1}
+.btn.login.is-in:hover{color:#fff;box-shadow:0 8px 26px -6px rgba(229,72,77,.8)}
+.btn.login.is-in:hover::before{opacity:1}
+.btn.login .lg-exit{display:none}
+.btn.login .lg-ico-out{display:none}
+.btn.login.is-in:hover .lg-label,
+.btn.login.is-in:hover .lg-ico-in{display:none}
+.btn.login.is-in:hover .lg-exit,
+.btn.login.is-in:hover .lg-ico-out{display:inline}
+.tunnels{flex:1;overflow:auto;display:flex;flex-direction:column;gap:12px;padding-right:4px;min-height:0;position:relative}
+.tunnels::-webkit-scrollbar{width:8px}
+.tunnels::-webkit-scrollbar-thumb{background:var(--line2);border-radius:8px}
+
+.tcard{background:var(--panel);border:1px solid var(--line2);border-radius:16px;padding:15px 17px;
+  display:flex;align-items:center;gap:14px;cursor:default;position:relative;overflow:hidden;
+  transition:border-color .25s,box-shadow .25s,transform .22s var(--ease),opacity .2s;
+  animation:cardIn .45s var(--ease) backwards;touch-action:none}
+@keyframes cardIn{from{opacity:0;transform:translateX(26px)}to{opacity:1;transform:none}}
+/* 悬停轻微浮起：用 backwards 填充，动画结束后不再接管 transform，hover 才能生效（both 会把 transform:none 一直压在上面） */
+.tcard:hover:not(.dragging):not(.dim){border-color:var(--accent);box-shadow:0 16px 36px -16px rgba(76,141,255,.5);transform:translateY(-3px)}
+/* 其他隧道正在切换中：置灰禁用 */
+.tcard.dim{opacity:.45}
+.tc-toggle.disabled{opacity:.45;pointer-events:none;filter:grayscale(.4)}
+/* 置顶账号卡片：鎏金光晕（外发光 + 内描边呼吸）——外发光用 drop-shadow，不受卡片 overflow:hidden 裁剪 */
+.tcard[data-account="1"]{border-color:rgba(212,175,55,.5);filter:drop-shadow(0 0 8px rgba(212,175,55,.5))}
+.tcard[data-account="1"]::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  box-shadow:0 0 0 1px rgba(212,175,55,.42) inset;animation:pinGlow 3.2s ease-in-out infinite}
+@keyframes pinGlow{0%,100%{opacity:.45}50%{opacity:1}}
+body.dragging{cursor:grabbing}
+body.dragging *{cursor:grabbing !important;user-select:none}   /* 拖动全程统一为「抓手」光标 */
+body.dragging .tcard:not(.dragging){pointer-events:none}
+.tcard.dragging{opacity:.97;z-index:9;cursor:grabbing;transform-origin:top center;will-change:transform;
+  box-shadow:0 18px 44px -12px rgba(0,0,0,.7), 0 0 0 1px var(--accent) inset, 0 0 24px rgba(76,141,255,.35);
+  transition:box-shadow .3s var(--ease), border-color .25s, transform 0s}
+/* 拖动落点预览：跟随目标槽位实时滑动的虚线占位槽 + 「放到这里」提示 */
+.drop-ph{position:absolute;top:0;left:0;border-radius:16px;border:2px dashed var(--accent);
+  background:linear-gradient(180deg,rgba(76,141,255,.13),rgba(76,141,255,.04));
+  display:none;align-items:center;justify-content:center;pointer-events:none;z-index:1;box-sizing:border-box;
+  box-shadow:0 0 0 1px rgba(76,141,255,.12) inset,0 0 24px -8px rgba(76,141,255,.75);
+  transition:transform .2s var(--ease),height .2s var(--ease),opacity .15s var(--ease)}
+.drop-ph.show{display:flex;animation:dropPhIn .18s var(--ease)}
+@keyframes dropPhIn{from{opacity:0}to{opacity:1}}
+.drop-ph span{font-size:12px;font-weight:600;letter-spacing:.4px;color:var(--accent);
+  background:var(--panel);border:1px solid var(--accent);border-radius:999px;padding:3px 12px;
+  box-shadow:0 0 16px -3px rgba(76,141,255,.7);white-space:nowrap}
+[data-theme="light"] .drop-ph{background:linear-gradient(180deg,rgba(76,141,255,.12),rgba(76,141,255,.03))}
+/* 置顶账号卡片被拖动时：内容轻微晃动 */
+@keyframes wobble{0%,100%{transform:translateX(0)}
+  20%{transform:translateX(-7px) rotate(-1.6deg)}40%{transform:translateX(7px) rotate(1.6deg)}
+  60%{transform:translateX(-5px) rotate(-1deg)}80%{transform:translateX(5px) rotate(1deg)}}
+.tcard.wobble .tc-main{animation:wobble .55s ease-in-out}
+.tcard.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset, 0 10px 30px -14px rgba(76,141,255,.45)}
+.tcard.up{border-color:rgba(47,208,123,.55);box-shadow:0 0 0 1px rgba(47,208,123,.4) inset,0 0 22px rgba(47,208,123,.15)}
+.tc-main{flex:1;min-width:0}
+.tc-name{font-size:14.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+.tc-name .mode-badge{flex:none}
+.tc-nets{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+.tc-nets .chip{animation:none}
+.tc-ep{font-size:11px;color:var(--faint);margin-top:6px}
+.tc-acts{display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.tc-toggle{width:44px;height:24px;border-radius:999px;background:var(--line);border:1px solid var(--line2);
+  position:relative;cursor:pointer;transition:background .3s,border-color .3s,box-shadow .3s;flex:none}
+.tc-toggle::after{content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;
+  background:#8fa0b8;transition:transform .3s var(--ease),background .3s}
+.tc-toggle.on{background:rgba(47,208,123,.25);border-color:rgba(47,208,123,.6);box-shadow:0 0 14px rgba(47,208,123,.3)}
+.tc-toggle.on::after{transform:translateX(20px);background:var(--ok)}
+/* 连接中：旋钮停在左侧（off 位）+ 鎏金轨道 + 中心旋转加载环，表达「启动中」而非闪烁 */
+.tc-toggle.connecting{pointer-events:none;background:rgba(212,175,55,.28);border-color:rgba(212,175,55,.6);box-shadow:0 0 14px rgba(212,175,55,.25)}
+.tc-toggle.connecting::after{background:var(--gold)}
+.tc-toggle::before{content:'';position:absolute;top:50%;left:50%;width:12px;height:12px;margin:-6px 0 0 -6px;
+  border-radius:50%;border:2px solid rgba(255,255,255,.18);border-top-color:var(--gold);opacity:0;transition:opacity .2s}
+.tc-toggle.connecting::before{opacity:1;animation:tgSpin .7s linear infinite}
+@keyframes tgSpin{to{transform:rotate(360deg)}}
+/* 启动成功：轨道鎏金脉冲一下（旋钮由 transition 从左侧「拨动」到右侧 on 位） */
+.tc-toggle.just-on{animation:tgGlow .44s var(--ease)}
+@keyframes tgGlow{0%{box-shadow:0 0 0 rgba(47,208,123,0)}45%{box-shadow:0 0 18px rgba(47,208,123,.6)}100%{box-shadow:0 0 14px rgba(47,208,123,.3)}}
+.tc-del{border:0;background:transparent;color:var(--faint);cursor:pointer;font-size:11.5px;padding:2px 4px;
+  border-radius:6px;transition:color .2s,background .2s;position:relative;overflow:hidden}
+.tc-del:hover{color:var(--danger);background:rgba(229,72,77,.12)}
+.tc-watch{font-size:10.5px;color:var(--faint);display:flex;align-items:center;gap:4px}
+.tc-watch.on{color:var(--warn)}
+
+/* 空态 / 平台提示 */
+.empty{display:flex;flex-direction:column;align-items:center;gap:10px;color:var(--faint);
+  font-size:12.5px;line-height:1.9;text-align:center;padding:34px 10px;animation:riseIn .5s var(--ease) both}
+.empty svg{width:34px;height:34px;opacity:.5}
+.plat-tip{font-size:11px;color:var(--faint);line-height:1.7;border-top:1px dashed var(--line);padding-top:10px}
+
+/* 拖放遮罩 */
+.drop-mask{position:fixed;inset:0;background:rgba(11,15,22,.72);backdrop-filter:blur(6px);z-index:60;
+  display:none;place-items:center;animation:appIn .25s var(--ease)}
+.drop-mask.show{display:grid}
+.drop-inner{padding:40px 70px;border-radius:24px;border:2px dashed var(--accent);
+  background:rgba(76,141,255,.08);font-size:16px;font-weight:600;letter-spacing:2px;
+  animation:breathe 1.6s ease-in-out infinite alternate}
+@keyframes breathe{from{transform:scale(1)}to{transform:scale(1.05)}}
+
+/* Toast */
+/* Toast：按需求放在**左下角**（动画自左侧滑入滑出） */
+.toast-wrap{position:fixed;left:18px;bottom:18px;display:flex;flex-direction:column;gap:9px;z-index:70}
+.toast{padding:10px 16px;border-radius:12px;background:var(--panel);border:1px solid var(--line2);
+  font-size:12.5px;box-shadow:var(--shadow);animation:toastIn .35s var(--ease)}
+.toast.err{border-color:rgba(229,72,77,.5);color:#ffb4b9}
+.toast.ok{border-color:rgba(47,208,123,.5)}
+@keyframes toastIn{from{opacity:0;transform:translateX(-30px)}to{opacity:1;transform:none}}
+.toast.out{animation:toastOut .3s var(--ease) forwards}
+@keyframes toastOut{to{opacity:0;transform:translateX(-30px)}}
+
+/* ---- 设置弹窗 ---- */
+.side-hd-acts{display:flex;gap:8px;align-items:center}
+.btn.ghost{background:transparent}
+.sync-badge{font-size:10px;color:var(--accent);display:inline-flex;align-items:center;gap:3px;margin-left:6px;
+  padding:1px 7px;border:1px solid rgba(76,141,255,.35);border-radius:999px;background:rgba(76,141,255,.10);vertical-align:middle}
+.sync-badge svg{width:11px;height:11px}
+.modal-mask{position:fixed;inset:0;background:rgba(4,8,14,.6);backdrop-filter:blur(3px);
+  display:grid;place-items:center;z-index:80;animation:appIn .25s var(--ease)}
+.modal-mask[hidden]{display:none}
+.modal{width:390px;max-width:92vw;background:linear-gradient(165deg,var(--panel),var(--panel2));
+  border:1px solid var(--line2);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}
+.modal-hd{display:flex;align-items:center;justify-content:space-between;padding:15px 18px;border-bottom:1px solid var(--line)}
+.modal-hd h3{font-size:15px;font-weight:600}
+.modal-x{border:0;background:transparent;color:var(--dim);cursor:pointer;font-size:16px;line-height:1;
+  padding:4px 9px;border-radius:8px;transition:background .2s,color .2s}
+.modal-x:hover{background:var(--line2);color:var(--txt)}
+.modal-bd{padding:16px 18px;display:flex;flex-direction:column;gap:9px}
+.row{display:flex;align-items:center;justify-content:space-between;font-size:13.5px}
+.row input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent);cursor:pointer}
+.row input[type=number]{width:92px;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;
+  color:var(--txt);padding:6px 8px;font-size:13px}
+.hint{font-size:11.5px;color:var(--faint);line-height:1.5;margin:-3px 0 3px}
+.modal-acts{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}
+
+/* 版本号角标（右下角） */
+.version-tag{position:fixed;right:14px;bottom:9px;font-size:11px;color:var(--faint);
+  letter-spacing:.3px;user-select:none;opacity:.72;z-index:40;pointer-events:none}
+.version-tag b{color:var(--dim);font-weight:600}
+
+/* 更新提示横幅 */
+.update-banner{position:fixed;top:52px;left:50%;transform:translateX(-50%);z-index:75;
+  display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;width:max-content;max-width:92vw;
+  background:linear-gradient(135deg,rgba(76,141,255,.16),rgba(139,92,246,.16));
+  border:1px solid rgba(76,141,255,.5);box-shadow:var(--shadow);
+  font-size:12.5px;color:var(--txt);animation:toastIn .35s var(--ease)}
+.update-banner[hidden]{display:none}
+.update-banner svg{width:18px;height:18px;color:var(--accent);flex:none}
+.update-banner .ub-text{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.update-banner .btn.sm{padding:6px 12px;font-size:12px;flex:none}
+.ub-x{border:0;background:transparent;color:var(--dim);cursor:pointer;font-size:14px;line-height:1;
+  padding:4px 8px;border-radius:8px;transition:background .2s,color .2s;flex:none}
+.ub-x:hover{background:var(--line2);color:var(--txt)}
+
+/* ============ 账号登录（面板 / 历史用户名下拉 / 保存密码）============ */
+.acct-badge{font-size:10px;color:var(--ok);display:inline-flex;align-items:center;gap:3px;margin-left:6px;
+  padding:1px 7px;border:1px solid rgba(47,208,123,.35);border-radius:999px;background:rgba(47,208,123,.10);vertical-align:middle}
+.acct-badge svg{width:11px;height:11px}
+/* 已登录：主色仍是鎏金，加一圈内描边表示「当前已连着账号」 */
+.btn.login.is-in{box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),0 6px 20px -8px rgba(212,175,55,.55)}
+
+.login-mask{position:fixed;inset:0;z-index:90;display:grid;place-items:center;
+  background:radial-gradient(900px 560px at 72% -6%, rgba(76,141,255,.14), transparent 58%), rgba(5,9,15,.74);
+  backdrop-filter:blur(7px);animation:appIn .26s var(--ease)}
+.login-mask[hidden]{display:none}
+.login-mask.closing{animation:maskOut .18s var(--ease) forwards}
+@keyframes maskOut{to{opacity:0}}
+.login-card{position:relative;width:404px;max-width:92vw;border-radius:20px;overflow:hidden;
+  background:linear-gradient(165deg,var(--panel),var(--panel2));border:1px solid var(--line2);
+  box-shadow:0 34px 90px -34px rgba(0,0,0,.9);animation:loginIn .44s var(--ease) both}
+.login-mask.closing .login-card{animation:loginOut .18s var(--ease) forwards}
+@keyframes loginIn{from{opacity:0;transform:translateY(20px) scale(.955)}to{opacity:1;transform:none}}
+@keyframes loginOut{to{opacity:0;transform:translateY(10px) scale(.985)}}
+.lg-glow{position:absolute;inset:-45%;pointer-events:none;
+  background:conic-gradient(from 0deg, transparent 0 68%, rgba(76,141,255,.10) 80%, transparent 92%);
+  animation:heroHalo 11s linear infinite}
+.lg-hd{position:relative;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  padding:20px 20px 14px;border-bottom:1px solid var(--line)}
+.lg-brand{display:flex;align-items:center;gap:12px}
+.lg-logo{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;color:#fff;flex:none;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 0 20px rgba(76,141,255,.4)}
+.lg-logo svg{width:20px;height:20px}
+.lg-t{font-size:15px;font-weight:700}
+.lg-s{font-size:11.5px;color:var(--faint);margin-top:2px}
+.lg-x{border:0;background:transparent;color:var(--dim);cursor:pointer;font-size:15px;line-height:1;
+  padding:5px 9px;border-radius:8px;transition:background .2s,color .2s,transform .22s var(--ease)}
+.lg-x:hover{background:var(--line2);color:var(--txt);transform:rotate(90deg)}
+.lg-bd{position:relative;padding:18px 20px 20px;display:flex;flex-direction:column;gap:13px}
+.lg-field{position:relative;display:flex;flex-direction:column;gap:6px}
+.lg-label{font-size:12px;color:var(--dim)}
+.lg-field input{width:100%;background:var(--panel2);border:1px solid var(--line2);border-radius:11px;
+  color:var(--txt);padding:11px 13px;font-size:13.5px;outline:none;transition:border-color .22s,box-shadow .25s}
+.lg-field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(76,141,255,.16)}
+.lg-tip{font-size:10.5px;color:var(--faint);line-height:1.65;margin-top:1px}
+.lg-tip b{color:var(--dim)}
+.lg-tip code{font-family:Consolas,"JetBrains Mono",monospace;font-size:10px;color:var(--dim);
+  background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:0 4px}
+.lg-pw{position:relative;display:block}
+.lg-pw input{padding-right:44px}
+.lg-eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;
+  color:var(--faint);cursor:pointer;padding:6px;border-radius:8px;display:grid;place-items:center;
+  transition:color .2s,background .2s}
+.lg-eye svg{width:16px;height:16px}
+.lg-eye:hover{color:var(--txt);background:var(--line2)}
+.lg-eye.on{color:var(--accent)}
+.lg-eye.disabled{color:var(--line2);opacity:.4;cursor:not-allowed}
+.lg-eye.disabled:hover{background:transparent}
+/* 历史用户名下拉：点击用户名框展开，输入即筛选，无匹配自动消失 */
+.lg-hist{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:5;max-height:214px;overflow:auto;
+  background:var(--panel);border:1px solid var(--line2);border-radius:12px;box-shadow:var(--shadow);padding:5px;
+  animation:histIn .2s var(--ease) both}
+.lg-hist[hidden]{display:none}
+@keyframes histIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+.lg-hist-item{display:flex;align-items:center;gap:9px;padding:8px 9px;border-radius:9px;cursor:pointer;
+  transition:background .16s,transform .18s var(--ease)}
+.lg-hist-item:hover{background:var(--line2);transform:translateX(2px)}
+.lh-ico{width:24px;height:24px;border-radius:8px;flex:none;display:grid;place-items:center;color:var(--accent);
+  background:rgba(76,141,255,.12);border:1px solid rgba(76,141,255,.25)}
+.lh-ico svg{width:13px;height:13px}
+.lh-main{flex:1;min-width:0;display:flex;flex-direction:column}
+.lh-u{font-size:13px;font-weight:600}
+.lh-s{font-size:10.5px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lh-del{border:0;background:transparent;color:var(--faint);cursor:pointer;font-size:12px;line-height:1;
+  padding:5px 7px;border-radius:7px;flex:none;transition:color .18s,background .18s,transform .18s var(--ease)}
+.lh-del:hover{color:var(--danger);background:rgba(229,72,77,.14);transform:scale(1.14)}
+.lg-opts{display:flex;gap:18px;align-items:center}
+.lg-chk{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--dim);cursor:pointer;user-select:none;
+  position:relative}
+.lg-chk input{position:absolute;opacity:0;width:0;height:0}
+.lg-box{width:17px;height:17px;border-radius:6px;border:1px solid var(--line2);background:var(--panel2);
+  flex:none;position:relative;transition:background .2s,border-color .2s,box-shadow .2s}
+.lg-box::after{content:'';position:absolute;left:5px;top:2px;width:5px;height:9px;border:2px solid #fff;
+  border-top:0;border-left:0;transform:rotate(42deg) scale(.4);opacity:0;transition:opacity .18s,transform .22s var(--ease)}
+.lg-chk input:checked + .lg-box{background:linear-gradient(135deg,var(--accent),var(--accent2));border-color:transparent;
+  box-shadow:0 4px 14px -6px rgba(76,141,255,.7)}
+.lg-chk input:checked + .lg-box::after{opacity:1;transform:rotate(42deg) scale(1)}
+.lg-chk input:disabled + .lg-box{opacity:.4}
+.lg-chk input:focus-visible + .lg-box{box-shadow:0 0 0 3px rgba(76,141,255,.22)}
+.lg-chk:hover .lg-box{border-color:var(--accent)}
+.lg-note{font-size:11.5px;color:var(--gold);line-height:1.6;border-left:2px solid var(--gold-line);padding-left:9px}
+.lg-note:empty{display:none}
+.lg-hint{font-size:11.5px;color:var(--danger);opacity:0;transform:translateY(-4px);
+  transition:opacity .22s,transform .22s var(--ease)}
+.lg-hint.show{opacity:1;transform:none}
+.lg-hint.ok{color:var(--ok)}
+.lg-submit{justify-content:center;position:relative;overflow:hidden}
+.lg-submit .lg-spin{display:none;width:13px;height:13px;border-radius:50%;
+  border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .8s linear infinite}
+.lg-submit.busy{pointer-events:none;opacity:.85}
+.lg-submit.busy .lg-spin{display:block}
+.lg-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11.5px;color:var(--dim);
+  border-top:1px dashed var(--line);padding-top:11px}
+.lg-foot:empty{display:none}
+.lg-foot .mono{font-style:normal;color:var(--faint)}
+.lg-out{border:1px solid var(--line2);background:var(--panel2);color:var(--txt);border-radius:9px;padding:6px 11px;
+  font-size:11.5px;cursor:pointer;position:relative;overflow:hidden;
+  transition:color .2s,border-color .2s,transform .15s}
+.lg-out:hover{color:var(--danger);border-color:rgba(229,72,77,.5);transform:translateY(-1px)}
+
+/* ============ 关闭确认弹窗（两个按钮均带动画）============ */
+.exit-mask{position:fixed;inset:0;z-index:95;display:grid;place-items:center;
+  background:rgba(4,8,14,.66);backdrop-filter:blur(5px);animation:appIn .24s var(--ease)}
+.exit-mask[hidden]{display:none}
+.exit-mask.closing{animation:maskOut .17s var(--ease) forwards}
+.exit-card{position:relative;width:392px;max-width:92vw;padding:26px 24px 20px;border-radius:20px;overflow:hidden;
+  background:linear-gradient(165deg,var(--panel),var(--panel2));border:1px solid var(--line2);
+  box-shadow:0 34px 90px -34px rgba(0,0,0,.9);text-align:center;animation:loginIn .42s var(--ease) both}
+.exit-mask.closing .exit-card{animation:loginOut .17s var(--ease) forwards}
+.exit-halo{position:absolute;inset:-45%;pointer-events:none;
+  background:conic-gradient(from 0deg, transparent 0 72%, rgba(139,92,246,.12) 84%, transparent 94%);
+  animation:heroHalo 12s linear infinite}
+.exit-ico{position:relative;width:54px;height:54px;margin:0 auto 14px;border-radius:16px;display:grid;place-items:center;
+  color:var(--accent);background:linear-gradient(150deg,rgba(76,141,255,.18),rgba(139,92,246,.18));
+  border:1px solid rgba(76,141,255,.3);animation:pulse 3s ease-in-out infinite}
+.exit-ico svg{width:26px;height:26px}
+.exit-t{position:relative;font-size:17px;font-weight:700}
+.exit-s{position:relative;font-size:12.5px;color:var(--dim);line-height:1.75;margin:9px 0 20px}
+.exit-acts{position:relative;display:flex;gap:12px}
+.exit-btn{flex:1;border:1px solid var(--line2);background:var(--panel2);color:var(--txt);border-radius:13px;
+  padding:14px 10px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:9px;
+  font-size:13px;position:relative;overflow:hidden;
+  transition:transform .2s var(--ease),border-color .22s,box-shadow .25s,color .22s}
+.exit-btn .eb-ico{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;
+  background:var(--line);border:1px solid var(--line2);transition:transform .28s var(--ease),background .22s,color .22s}
+.exit-btn .eb-ico svg{width:17px;height:17px}
+.exit-btn .eb-t{font-weight:600}
+.exit-btn .eb-shine{position:absolute;top:0;left:-70%;width:45%;height:100%;pointer-events:none;transform:skewX(-18deg);
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.16),transparent);transition:left .55s var(--ease)}
+.exit-btn:hover{transform:translateY(-3px)}
+.exit-btn:hover .eb-shine{left:130%}
+.exit-btn:hover .eb-ico{transform:scale(1.1) rotate(-4deg)}
+.exit-btn:active{transform:translateY(-1px) scale(.975)}
+.exit-btn.min:hover{border-color:rgba(76,141,255,.6);color:var(--accent);box-shadow:0 12px 30px -14px rgba(76,141,255,.6)}
+.exit-btn.min:hover .eb-ico{background:rgba(76,141,255,.16);color:var(--accent)}
+.exit-btn.quit:hover{border-color:rgba(229,72,77,.6);color:var(--danger);box-shadow:0 12px 30px -14px rgba(229,72,77,.55)}
+.exit-btn.quit:hover .eb-ico{background:rgba(229,72,77,.16);color:var(--danger)}
+.exit-remember{justify-content:center;margin-top:16px}
+
+/* ============ 亮色主题（Light）============ */
+:root[data-theme="light"]{
+  --bg:#f0f2f7; --panel:#ffffff; --panel2:#f4f5fa; --line:#dde1ed; --line2:#c8cee0;
+  --txt:#161c2e; --dim:#5e6a82; --faint:#8a96b0;
+  --shadow:0 16px 44px -20px rgba(0,0,0,.12);
+}
+[data-theme="light"] .titlebar{background:rgba(248,249,252,.85)}
+[data-theme="light"] .btn-power{background:linear-gradient(165deg,#eef2f8,#e2e6f0)}
+[data-theme="light"] .ripple{background:rgba(0,0,0,.12)}
+[data-theme="light"] .drop-mask{background:rgba(220,225,235,.65)}
+[data-theme="light"] .modal-mask{background:rgba(200,208,225,.52)}
+[data-theme="light"] .login-mask{background:radial-gradient(800px 480px at 72% -6%,rgba(76,141,255,.08),transparent 58%),rgba(210,218,235,.66)}
+[data-theme="light"] .exit-mask{background:rgba(200,208,225,.56)}
+[data-theme="light"] .login-card,
+[data-theme="light"] .exit-card{box-shadow:0 24px 64px -24px rgba(0,0,0,.18)}
+[data-theme="light"] .eb-shine{background:linear-gradient(90deg,transparent,rgba(0,0,0,.08),transparent)}
+[data-theme="light"] .lg-submit .lg-spin{border-color:rgba(0,0,0,.16); border-top-color:#222}
+[data-theme="light"] .tcard.dragging{box-shadow:0 14px 34px -10px rgba(0,0,0,.22),0 0 0 1px var(--accent) inset,0 0 14px rgba(76,141,255,.25)}
+[data-theme="light"] .update-banner{background:linear-gradient(135deg,rgba(76,141,255,.08),rgba(139,92,246,.08))}
+[data-theme="light"] .ring-fg{stroke:url(#gIdleL)}
+[data-theme="light"] .version-tag{opacity:.6}
