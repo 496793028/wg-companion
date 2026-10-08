@@ -229,6 +229,7 @@ body.dragging .tcard:not(.dragging){pointer-events:none}
   font-size:12.5px;box-shadow:var(--shadow);animation:toastIn .35s var(--ease)}
 .toast.err{border-color:rgba(229,72,77,.5);color:#ffb4b9}
 .toast.ok{border-color:rgba(47,208,123,.5)}
+.toast.warn{border-color:rgba(245,181,68,.55);color:#ffd894}
 @keyframes toastIn{from{opacity:0;transform:translateX(-30px)}to{opacity:1;transform:none}}
 .toast.out{animation:toastOut .3s var(--ease) forwards}
 @keyframes toastOut{to{opacity:0;transform:translateX(-30px)}}

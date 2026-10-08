@@ -750,6 +750,7 @@ window.wgc.onAccountChanged(async d => {
   refreshLoginBtn(); renderAcctFooter();
   if (d && d.action === 'autologin') toast(`已自动登录 ${d.username}`);
   else if (d && d.action === 'logout') toast(`已退出登录 ${d.username}`);
+  else if (d && d.action === 'revoked') toast(`账号「${d.username}」已在服务端删除或停用，本地配置已移除`, 'warn');
 });
 
 /* ================= 启动 ================= */

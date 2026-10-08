@@ -387,7 +387,8 @@ function postJson(urlStr, payload, allowInsecure) {
       res.on('end', () => {
         let j = null; try { j = JSON.parse(body); } catch {}
         if (res.statusCode >= 200 && res.statusCode < 300 && j) resolve(j);
-        else resolve({ error: (j && j.error) || ('登录失败（HTTP ' + res.statusCode + '）') });
+        else resolve({ error: (j && j.error) || ('登录失败（HTTP ' + res.statusCode + '）'),
+                       status: res.statusCode });
       });
     });
     req.on('error', e => resolve({ error: '无法连接服务器：' + ((e && e.message) || e) }));
@@ -403,8 +404,11 @@ async function doLogin(p) {
   if (!server || !username || !password) return { ok: false, error: '请填写服务器地址、用户名与密码' };
   const cfg = loadCfg();
   const r = await postJson(server + '/api/client/login', { username, password }, cfg.allowInsecure !== false);
+  /* 服务端明确返回 401/404：账号已被删除、停用或口令已改 —— 告知调用方清理本地残留配置。
+     与网络错误（无法连接 / 超时）区分开，后者不应误删本地配置。 */
   if (r.error || !r.ok || typeof r.conf !== 'string')
-    return { ok: false, error: r.error || '登录失败：服务器未返回配置' };
+    return { ok: false, gone: r.status === 401 || r.status === 404,
+             status: r.status, error: r.error || '登录失败：服务器未返回配置' };
   ensureDir();
   const base = core.sanitizeTunnelName(username) || 'account';
   const map = loadAccounts().tunnels;
@@ -609,14 +613,32 @@ async function fetchServerConf(server, token, allowInsecure) {
       res.on('end', () => {
         try {
           const j = JSON.parse(body);
-          if (j && typeof j.conf === 'string') resolve({ conf: j.conf, hash: j.hash || '', name: j.name || '' });
-          else resolve(null);
-        } catch { resolve(null); }
+          if (j && typeof j.conf === 'string') resolve({ ok: true, conf: j.conf, hash: j.hash || '', name: j.name || '' });
+          /* 账号/配置已在服务端被删除或令牌被撤销：明确告知调用方做本地清理（不要静默当「无更新」） */
+          else resolve({ ok: false, gone: res.statusCode === 404 || res.statusCode === 401,
+                         status: res.statusCode, error: (j && j.error) || '' });
+        } catch { resolve({ ok: false, gone: false, status: res.statusCode, error: '响应解析失败' }); }
       });
     });
-    req.on('error', () => resolve(null));
-    req.on('timeout', () => { try { req.destroy(); } catch {} resolve(null); });
+    req.on('error', () => resolve({ ok: false, gone: false, error: '网络错误' }));
+    req.on('timeout', () => { try { req.destroy(); } catch {} resolve({ ok: false, gone: false, error: '超时' }); });
   });
+}
+
+/* 移除某账号自动拉取的本地配置（服务端账号已删除 / 令牌失效时调用）。
+   返回被移除的文件数；同时清理本地账号标记与连接状态，并广播刷新界面。 */
+function removeAccountConfig(server, username) {
+  const a = loadAccounts();
+  const files = Object.keys(a.tunnels).filter(f => a.tunnels[f] &&
+    a.tunnels[f].username === username &&
+    (!server || normalizeServer(a.tunnels[f].server) === normalizeServer(server)));
+  for (const f of files) {
+    const w = watchers.get(f); if (w) { try { w.close(); } catch {} watchers.delete(f); }
+    try { fs.unlinkSync(tunnelPath(f)); } catch {}
+    delete a.tunnels[f]; delete states[f];
+  }
+  if (files.length) { saveAccounts(a); updateTray(); }
+  return files.length;
 }
 
 let syncTimer = null;
@@ -633,7 +655,17 @@ async function autoSyncTick() {
       let cur;
       try { cur = fs.readFileSync(tunnelPath(t.file), 'utf8'); } catch { continue; }
       const got = await fetchServerConf(t.server, t.token, allowInsecure);
-      if (!got) continue;
+      /* 账号已被管理员删除 / 令牌被撤销：服务端返回 404(或 401)。
+         此前这里 `if(!got) continue` 会把这种情况当作「无更新」→ 旧配置永远残留，
+         导致「用户已删除但客户端仍能自动登录、继续使用旧配置」。现在改为就地清理。 */
+      if (!got) continue;                          // 真·网络异常：保留本地，下轮再试
+      if (!got.ok) {
+        if (got.gone) {
+          removeAccountConfig(t.server, t.accountUser);
+          broadcast('account-changed', { action: 'revoked', username: t.accountUser, server: t.server });
+        }
+        continue;
+      }
       const curNorm = cur.replace(/\r\n/g, '\n');
       const gotNorm = got.conf.replace(/\r\n/g, '\n');
       if (curNorm === gotNorm) continue;          // 未变更，跳过
@@ -657,7 +689,9 @@ function startAutoSync() {
 }
 
 /* 启动自动登录：对勾选「自动登录」且已安全保存密码的账号依次登录，成功后其配置置顶显示。
-   出站 HTTPS、失败静默（不打扰），不影响应用正常启动。 */
+   出站 HTTPS、失败静默（不打扰），不影响应用正常启动。
+   账号若已被管理员删除 / 停用，服务端会拒绝登录 —— 此时清理本地残留配置，
+   避免「用户已删除但客户端仍显示并继续使用旧配置」。 */
 async function startAutoLogin() {
   let list = [];
   try { list = loadAccounts().history.filter(h => h.autoLogin && h.pwdEnc); } catch { return; }
@@ -671,6 +705,11 @@ async function startAutoLogin() {
         if (Notification.isSupported())
           new Notification({ title: '已自动登录', body: h.username + ' · 配置已自动更新', silent: true }).show();
       } catch {}
+    } else if (r.gone) {
+      /* 账号在服务端已不存在（或已停用/改密）：移除本地旧配置并标记为已失效，
+         否则该旧配置会一直留在列表里、看起来「删了还能用」。 */
+      const removed = removeAccountConfig(h.server, h.username);
+      broadcast('account-changed', { action: 'revoked', username: h.username, server: h.server, removed });
     }
   }
 }
