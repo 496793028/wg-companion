@@ -97,8 +97,8 @@ body{
 
 /* ---- 右侧隧道列表 ---- */
 .side{display:flex;flex-direction:column;gap:14px;min-height:0}
-.side-hd{display:flex;align-items:center;justify-content:space-between}
-.side-hd h2{font-size:16px}
+.side-hd{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.side-hd h2{font-size:16px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .btn{border:1px solid var(--line2);background:var(--panel2);color:var(--txt);border-radius:11px;
   padding:9px 16px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;
   position:relative;overflow:hidden;transition:transform .15s,box-shadow .25s,border-color .2s}
@@ -118,8 +118,9 @@ body{
 .btn.login:hover{transform:none;border-color:transparent;box-shadow:0 8px 24px -8px rgba(212,175,55,.72)}
 .btn.login:active{transform:none}
 /* 「导入配置」与「登录」**固定同宽**、内容居中 —— 文案在 账号名/退出/登录 之间切换时按钮尺寸恒定，
-   不再出现宽度变化导致的「闪一下变大」。 */
-#btnImport,#btnLogin{width:118px;justify-content:center}
+   不再出现宽度变化导致的「闪一下变大」。
+   flex:none + 固定 width 双保险：工具行变窄时也绝不压缩按钮（否则会被 flex 缩成接近方形并挤压相邻控件）。 */
+#btnImport,#btnLogin{width:118px;flex:none;justify-content:center}
 #btnLogin .lg-label,#btnLogin .lg-exit{max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 红色变化层：渐变之间无法平滑插值，故叠一层红色渐变做透明度交叉淡入 */
 .btn.login::before{content:'';position:absolute;inset:0;opacity:0;
@@ -233,7 +234,7 @@ body.dragging .tcard:not(.dragging){pointer-events:none}
 @keyframes toastOut{to{opacity:0;transform:translateX(-30px)}}
 
 /* ---- 设置弹窗 ---- */
-.side-hd-acts{display:flex;gap:8px;align-items:center}
+.side-hd-acts{display:flex;gap:8px;align-items:center;flex:none}
 .btn.ghost{background:transparent}
 .sync-badge{font-size:10px;color:var(--accent);display:inline-flex;align-items:center;gap:3px;margin-left:6px;
   padding:1px 7px;border:1px solid rgba(76,141,255,.35);border-radius:999px;background:rgba(76,141,255,.10);vertical-align:middle}
