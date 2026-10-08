@@ -137,6 +137,12 @@ class MainActivity : ComponentActivity() {
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
 
+    /* Activity 内的 Composable/lambda 作用域里 this 可能被 Receiver 遮蔽，导致解析不到上面的
+       toast()；这里用顶层成员函数名区分，统一走 applicationContext 弹提示。 */
+    private fun wbToast(msg: String) {
+        Toast.makeText(applicationContext, msg, Toast.LENGTH_LONG).show()
+    }
+
     /* ---------- 账号登录 ---------- */
 
     /** 登录并落盘：成功返回 (true, 显示名)，失败返回 (false, 错误) */
@@ -270,7 +276,8 @@ class MainActivity : ComponentActivity() {
         val files = dir.listFiles { f -> f.name.endsWith(".conf") } ?: emptyArray()
         for (f in files) {
             val text = try { f.readText() } catch (_: Exception) { continue }
-            AccountStore.tunnelOwner(this, f.name) ?: continue   // 仅处理账号登录拉取的隧道
+            val owner = AccountStore.tunnelOwner(this, f.name) ?: continue   // 仅处理账号登录拉取的隧道（server to username）
+            val (ownerServer, ownerUser) = owner
             val meta = ConfMeta.parseSyncMeta(text) ?: continue
             if (meta.server.isEmpty() || meta.token.isEmpty()) continue
             val got = withContext(Dispatchers.IO) { LoginApi.confByToken(meta.server, meta.token) }
@@ -278,10 +285,7 @@ class MainActivity : ComponentActivity() {
                 /* 账号已被管理员删除 / 令牌被撤销（401/404）：此前这里 `?: continue` 会把它
                    当成「无更新」→ 旧配置永远残留，导致「用户已删除但客户端仍继续使用旧配置」。
                    现在改为就地清理该账号的本地配置。网络异常（gone=false）则保留本地，稍后重试。 */
-                if (got.gone) {
-                    val owner = AccountStore.tunnelOwner(this, f.name)
-                    if (owner != null) performLogout(owner.server, owner.username)
-                }
+                if (got.gone) performLogout(ownerServer, ownerUser)
                 continue
             }
             val newConf = got.conf
@@ -402,13 +406,12 @@ class MainActivity : ComponentActivity() {
                 /* 复用已有登录结果落盘（不再重复请求一次登录接口） */
                 persistLogin(h.server, h.username, pwd, remember = true, autoLogin = true, conf = res.conf)
                 tunnels = loadTunnels(); tunnels.forEach { refreshState(it.file) }
-                toast("已自动登录 ${res.name.ifEmpty { h.username }}，配置已置顶")
+                wbToast("已自动登录 ${res.name.ifEmpty { h.username }}，配置已置顶")
             } else if (res.gone) {
                 val removed = performLogout(h.server, h.username)
                 tunnels = loadTunnels()
-                if (removed > 0) toast("账号「${h.username}」已在服务端删除或停用，本地配置已移除")
+                if (removed > 0) wbToast("账号「${h.username}」已在服务端删除或停用，本地配置已移除")
             }
-        }
         }
 
         val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -431,7 +434,7 @@ class MainActivity : ComponentActivity() {
                         refreshState(t.second)                           // 成功 → 旋钮拨动到 on
                     }
                 } else if (t != null && t.first) {
-                    toast("未授予 VPN 权限，无法开启隧道")
+                    wbToast("未授予 VPN 权限，无法开启隧道")
                     connectingMap[t.second.absolutePath] = false
                 } else if (t != null) {
                     connectingMap[t.second.absolutePath] = false
@@ -769,7 +772,7 @@ class MainActivity : ComponentActivity() {
                                         TextButton(onClick = {
                                             AccountStore.forget(ctx, h.server, h.username)   /* 连同保存的密码一起删除 */
                                             hist = AccountStore.history(ctx)
-                                            toast("已删除该条目及其保存的密码")
+                                            wbToast("已删除该条目及其保存的密码")
                                         }) { Text("删除", color = Color(0xFFE5484D), fontSize = 11.5.sp) }
                                     }
                                 }
@@ -841,7 +844,7 @@ class MainActivity : ComponentActivity() {
                                     owner = (tunnelDir().listFiles { f -> f.name.endsWith(".conf") } ?: emptyArray())
                                         .mapNotNull { AccountStore.tunnelOwner(ctx, it.name)?.let { o -> it.name to o } }
                                         .firstOrNull()
-                                    onChanged(); toast("已登录 $msg，配置已置顶")
+                                    onChanged(); wbToast("已登录 $msg，配置已置顶")
                                 } else hint = msg
                             }
                         },
@@ -861,7 +864,7 @@ class MainActivity : ComponentActivity() {
                             Text("已登录：$uname", color = dimClr, fontSize = 12.sp, modifier = Modifier.weight(1f))
                             TextButton(onClick = {
                                 val n = performLogout(srv, uname)
-                                owner = null; onChanged(); toast("已退出登录，删除 $n 个配置")
+                                owner = null; onChanged(); wbToast("已退出登录，删除 $n 个配置")
                             }) { Text("退出登录", color = Color(0xFFE5484D), fontSize = 12.sp) }
                         }
                     }
