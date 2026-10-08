@@ -145,6 +145,15 @@ class MainActivity : ComponentActivity() {
     ): Pair<Boolean, String> {
         val r = withContext(Dispatchers.IO) { LoginApi.login(serverRaw, username, password) }
         if (!r.ok) return false to r.error
+        persistLogin(serverRaw, username, password, remember, autoLogin, r.conf)
+        return true to r.name.ifEmpty { username }
+    }
+
+    /** 把已取得的登录结果落盘（写 .conf + 标记账号 + 记住历史）。供 performLogin 与启动自动登录复用。 */
+    private suspend fun persistLogin(
+        serverRaw: String, username: String, password: String,
+        remember: Boolean, autoLogin: Boolean, conf: String,
+    ) {
         val srv = LoginApi.normalizeServer(serverRaw)
         val dir = tunnelDir(); dir.mkdirs()
         /* 同一账号再次登录覆盖原文件（保持置顶位置不变）；不同账号重名才追加序号 */
@@ -153,13 +162,12 @@ class MainActivity : ComponentActivity() {
         var name = base; var n = 2
         if (existing == null) while (File(dir, "$name.conf").exists()) name = "${base.take(12)}-${n++}"
         withContext(Dispatchers.IO) {
-            File(dir, "$name.conf").writeText(r.conf)
+            File(dir, "$name.conf").writeText(conf)
             AccountStore.markTunnel(this@MainActivity, "$name.conf", srv, username)
             AccountStore.remember(this@MainActivity, srv, username, remember, autoLogin,
                 if (remember) password else null)
             AccountStore.setLastServer(this@MainActivity, srv)   // 登录成功才记住服务器地址
         }
-        return true to r.name.ifEmpty { username }
     }
 
     /** 退出登录：关闭并删除该账号自动拉取的配置（历史条目与保存的密码保留） */
@@ -265,7 +273,18 @@ class MainActivity : ComponentActivity() {
             AccountStore.tunnelOwner(this, f.name) ?: continue   // 仅处理账号登录拉取的隧道
             val meta = ConfMeta.parseSyncMeta(text) ?: continue
             if (meta.server.isEmpty() || meta.token.isEmpty()) continue
-            val newConf = withContext(Dispatchers.IO) { LoginApi.confByToken(meta.server, meta.token) } ?: continue
+            val got = withContext(Dispatchers.IO) { LoginApi.confByToken(meta.server, meta.token) }
+            if (!got.ok) {
+                /* 账号已被管理员删除 / 令牌被撤销（401/404）：此前这里 `?: continue` 会把它
+                   当成「无更新」→ 旧配置永远残留，导致「用户已删除但客户端仍继续使用旧配置」。
+                   现在改为就地清理该账号的本地配置。网络异常（gone=false）则保留本地，稍后重试。 */
+                if (got.gone) {
+                    val owner = AccountStore.tunnelOwner(this, f.name)
+                    if (owner != null) performLogout(owner.server, owner.username)
+                }
+                continue
+            }
+            val newConf = got.conf
             val normOld = text.trim().replace(Regex("\\r\\n"), "\n")
             val normNew = newConf.trim().replace(Regex("\\r\\n"), "\n")
             if (normNew == normOld) continue   // 无变更，跳过
@@ -371,13 +390,25 @@ class MainActivity : ComponentActivity() {
             dragOffset = 0f
         }
 
-        /* 启动自动登录：勾选了「自动登录」且已安全保存密码的账号（只取最近一条），静默登录 */
+        /* 启动自动登录：勾选了「自动登录」且已安全保存密码的账号（只取最近一条），静默登录。
+           账号若已被管理员删除 / 停用，服务端会拒绝登录（401/404）——此时清理本地残留配置，
+           避免「用户已删除但客户端仍显示并继续使用旧配置」。 */
         LaunchedEffect(Unit) {
             val h = AccountStore.history(this@MainActivity).firstOrNull { it.autoLogin && it.hasPwd } ?: return@LaunchedEffect
             val pwd = withContext(Dispatchers.IO) { AccountStore.password(this@MainActivity, h.server, h.username) }
             if (pwd.isEmpty()) return@LaunchedEffect
-            val (ok, msg) = performLogin(h.server, h.username, pwd, true, true)
-            if (ok) { tunnels = loadTunnels(); toast("已自动登录 $msg，配置已置顶") }
+            val res = withContext(Dispatchers.IO) { LoginApi.login(h.server, h.username, pwd) }
+            if (res.ok) {
+                /* 复用已有登录结果落盘（不再重复请求一次登录接口） */
+                persistLogin(h.server, h.username, pwd, remember = true, autoLogin = true, conf = res.conf)
+                tunnels = loadTunnels(); tunnels.forEach { refreshState(it.file) }
+                toast("已自动登录 ${res.name.ifEmpty { h.username }}，配置已置顶")
+            } else if (res.gone) {
+                val removed = performLogout(h.server, h.username)
+                tunnels = loadTunnels()
+                if (removed > 0) toast("账号「${h.username}」已在服务端删除或停用，本地配置已移除")
+            }
+        }
         }
 
         val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->

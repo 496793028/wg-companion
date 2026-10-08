@@ -29,6 +29,9 @@ object LoginApi {
         val name: String = "",
         val vpnIp: String = "",
         val conf: String = "",
+        /** 服务端明确表示账号不存在/已停用（HTTP 401/404）—— 调用方应清理本地残留配置。
+         *  与网络错误区分：后者不应误删本地配置。 */
+        val gone: Boolean = false,
     )
 
     fun normalizeServer(s: String): String {
@@ -92,22 +95,28 @@ object LoginApi {
             return Result(true, name = json.optString("name"), vpnIp = json.optString("vpn_ip"), conf = conf)
         }
         val msg = json?.optString("error") ?: ""
-        return Result(false, msg.ifEmpty { "登录失败（HTTP $code）" })
+        /* 401/404 = 账号已被删除 / 停用 / 口令已改：告知调用方清理本地残留配置 */
+        val gone = (code == 401 || code == 404)
+        return Result(false, msg.ifEmpty { "登录失败（HTTP $code）" }, gone = gone)
     }
 
     /* 服务端自动更新：凭每账号只读 token 拉取最新 .conf（与桌面端 fetchServerConf 对齐）。
-       GET {server}/api/client/conf?token=...；返回 conf 文本或 null（失败/无变更由调用方比对）。 */
-    fun confByToken(serverRaw: String, token: String): String? {
+       GET {server}/api/client/conf?token=...；
+       返回 ConfResult：ok=拿到配置，gone=账号/令牌已被删除或撤销（此时应清理本地配置），
+       两者都为 false 表示网络异常（保留本地，稍后重试）。 */
+    data class ConfResult(val ok: Boolean = false, val conf: String = "", val gone: Boolean = false)
+
+    fun confByToken(serverRaw: String, token: String): ConfResult {
         val server = normalizeServer(serverRaw)
-        if (server.isEmpty() || token.isEmpty()) return null
+        if (server.isEmpty() || token.isEmpty()) return ConfResult()
         return try {
             fetchByToken(server, token, lenient = false)
         } catch (_: Exception) {
-            try { fetchByToken(server, token, lenient = true) } catch (_: Exception) { null }
+            try { fetchByToken(server, token, lenient = true) } catch (_: Exception) { ConfResult() }
         }
     }
 
-    private fun fetchByToken(server: String, token: String, lenient: Boolean): String? {
+    private fun fetchByToken(server: String, token: String, lenient: Boolean): ConfResult {
         val urlConn = URL("$server/api/client/conf?token=${URLEncoder.encode(token, "UTF-8")}").openConnection()
         val conn = urlConn as HttpURLConnection
         conn.requestMethod = "GET"
@@ -124,7 +133,8 @@ object LoginApi {
         conn.disconnect()
         val json = try { JSONObject(text) } catch (_: Exception) { null }
         if (code in 200..299 && json != null && json.optString("conf").isNotEmpty())
-            return json.optString("conf")
-        return null
+            return ConfResult(ok = true, conf = json.optString("conf"))
+        /* 401/404：令牌无效或已被撤销 / 账号不存在 → 需要清理本地配置 */
+        return ConfResult(ok = false, gone = (code == 401 || code == 404))
     }
 }
