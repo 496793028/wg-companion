@@ -125,7 +125,13 @@ body{
 /* 红色变化层：渐变之间无法平滑插值，故叠一层红色渐变做透明度交叉淡入 */
 .btn.login::before{content:'';position:absolute;inset:0;opacity:0;
   background:linear-gradient(135deg,#a81f18,#e5484d);transition:opacity .22s ease}
-.btn.login>*{position:relative;z-index:1}
+/* ⚠ 必须排除 .ripple：点击涟漪是 .btn.login 的**直接子元素**（见 app.js 的全局 click 监听），
+   它按 max(按钮宽,高)=118px 生成，本意靠 position:absolute 悬浮。若被下面这条通配规则改写成
+   relative，涟漪就进入 flex 流，118px 直径会把按钮高度撑成 118+18(padding)+2(border)=138px，
+   使按钮瞬间「变长接近方形」并把整行 .side-hd 一起撑高。 */
+.btn.login>*:not(.ripple){position:relative;z-index:1}
+/* 双保险：无论后续再出现什么通配规则，涟漪永远脱离文档流、不参与布局。 */
+.btn.login>.ripple{position:absolute}
 .btn.login.is-in:hover{color:#fff;box-shadow:0 8px 26px -6px rgba(229,72,77,.8)}
 .btn.login.is-in:hover::before{opacity:1}
 .btn.login .lg-exit{display:none}
